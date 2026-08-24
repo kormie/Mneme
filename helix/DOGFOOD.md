@@ -13,6 +13,10 @@ same starting memory produce byte-identical output.
 This is a laptop tool for the operator's own notes. It is not a KOHO
 product feature and touches no KOHO system.
 
+Notes you drop by hand are the `file` channel. Live channels — Claude
+Code sessions today — arrive through the sensory adapter loop instead:
+see [ADAPTER.md](ADAPTER.md).
+
 ## What it is, and is not
 
 - **Local-only. No network.** The CLI reads files in the inbox directory

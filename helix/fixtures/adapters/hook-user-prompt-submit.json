@@ -1,0 +1,7 @@
+{
+  "session_id": "fixture-session",
+  "transcript_path": "/dev/null",
+  "cwd": "/home/operator/project",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "Add a unit test for the anomaly gate's card-number rule."
+}

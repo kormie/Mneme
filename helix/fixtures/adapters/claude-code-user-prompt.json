@@ -1,0 +1,7 @@
+{
+  "id": "cc-fixture-0001",
+  "t": 1756000000000,
+  "channel": "claude-code",
+  "kind": "user-prompt",
+  "text": "Refactor the tray fixture loader to sort notes by name before ingest, and add a test that the order is stable."
+}

@@ -18,7 +18,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { basename, dirname, join, resolve } from "node:path";
 import { loadKernel, type KernelIR } from "./kernel.js";
 import { makeEmitter, runGraph, type Appliers, type Emitter } from "./scheduler.js";
-import { scanNotes, type AnomalyFlag, type AnomalyMatch } from "./anomaly.js";
+import { type AnomalyFlag, type AnomalyMatch } from "./anomaly.js";
+import type { Observation } from "./observation.js";
+import { sensoryAppliers, type SensedObs } from "./sensory.js";
 import {
   loadStore,
   saveStore,
@@ -43,20 +45,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const HELIX_ROOT = resolve(HERE, "..");
 const SPEC_ROOT = resolve(HELIX_ROOT, "../spec");
 
-interface RawPacket {
-  id: string;
-  channel: "file";
-  text: string;
-}
-
-interface Observation {
-  id: string;
-  source: string;
-  title: string;
-  headings: string[];
-  text: string;
-}
-
 interface WriteItem {
   store: "episodic" | "semantic";
   key: string;
@@ -69,25 +57,6 @@ export interface Hit {
   score: number;
   matched: string[];
   triples: Triple[];
-}
-
-function firstHeading(text: string): string | null {
-  for (const line of text.split("\n")) {
-    const m = line.match(/^#{1,6}\s+(.*\S)/);
-    if (m) return m[1] ?? null;
-  }
-  return null;
-}
-
-function headings(text: string): string[] {
-  return text
-    .split("\n")
-    .map((l) => l.match(/^#{2,6}\s+(.*\S)/)?.[1])
-    .filter((h): h is string => h !== undefined);
-}
-
-function firstLine(text: string): string | null {
-  return text.split("\n").find((l) => l.trim() !== "")?.trim() ?? null;
 }
 
 /** Accent-folded (NFKD, marks stripped) so "réunion" matches "reunion". */
@@ -137,53 +106,13 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): App
   const coreStore = { values: [] as string[], goals: [] as string[], style: {} };
 
   const appliers: Appliers = {
-    // --- pg-s2w: inbox files → working-memory slots -------------------
-    "pg-s2w/sensor-normalize": (inputs, ctx) => {
-      const raw = inputs.raw as RawPacket[];
-      ctx.emit({ type: "store.read", store: "buffer", keys: raw.map((p) => p.id) });
-      const obs: Observation[] = raw.map((p) => ({
-        id: p.id,
-        source: p.id,
-        title: firstHeading(p.text) ?? firstLine(p.text) ?? p.id,
-        headings: headings(p.text),
-        text: p.text,
-      }));
-      return { obs };
-    },
-    // Offline stand-in: uniform salience, no model call.
-    "pg-s2w/salience": (inputs) => {
-      const obs = inputs.obs as Observation[];
-      return {
-        scored: obs.map((o) => ({ obs: o, salience: 1, rationale: "offline stand-in" })),
-      };
-    },
-    // Offline stand-in: deterministic secret scan (src/anomaly.ts). A
-    // non-null flag routes on declared edge e4 so the gate quarantines.
-    "pg-s2w/anomaly": (inputs) => {
-      const obs = inputs.obs as Observation[];
-      return { flag: scanNotes(obs) };
-    },
-    "pg-s2w/gate": (inputs) => {
-      const scored = inputs.scored as { obs: Observation; salience: number }[];
-      const flag = inputs.flag as AnomalyFlag | undefined;
-      const quarantined = new Set(flag?.notes ?? []);
-      return { selected: scored.filter((s) => !quarantined.has(s.obs.id)).map((s) => s.obs) };
-    },
-    "pg-s2w/style": () => ({ style: { tone: "plain" } }),
-    // Working memory is a declared budget (slot_schema.maxSlots); what
-    // does not fit is reported on the dropped port, never lost silently.
-    "pg-s2w/bind": (inputs) => {
-      const selected = inputs.selected as Observation[];
-      const schema = inputs.slot_schema as { maxSlots: number };
-      return {
-        slots: selected.slice(0, schema.maxSlots).map((o) => ({ id: `slot:${o.id}`, obs: o })),
-        dropped: selected.slice(schema.maxSlots).map((o) => o.id),
-      };
-    },
+    // --- pg-s2w: Observation packets → working-memory slots (shared
+    // with the adapter listener; see src/sensory.ts) -------------------
+    ...sensoryAppliers(),
 
     // --- pg-w2l write path: slots → LTM commits -----------------------
     "pg-w2l/episode": (inputs) => {
-      const trace = inputs.trace as { slots: { obs: Observation }[] };
+      const trace = inputs.trace as { slots: { obs: SensedObs }[] };
       // Working episodes carry the note text for semantic extraction;
       // the persisted Episode never does (conflict rebuilds it from
       // triples, so only tokens reach the store).
@@ -458,9 +387,11 @@ export function runTray(
     .filter((f) => f.endsWith(".md"))
     .sort();
   if (files.length === 0) throw new Error(`no .md notes in inbox: ${inboxDir}`);
-  const raw: RawPacket[] = files.map((f) => ({
+  const raw: Observation[] = files.map((f) => ({
     id: basename(f),
+    t: Math.floor(statSync(join(inboxDir, f)).mtimeMs),
     channel: "file",
+    kind: "note",
     text: readFileSync(join(inboxDir, f), "utf8"),
   }));
 
@@ -476,7 +407,7 @@ export function runTray(
     appliers,
     emitter,
   );
-  const slots = s2w.get("bind")?.slots as { obs: Observation }[];
+  const slots = s2w.get("bind")?.slots as { obs: SensedObs }[];
   const deferred = (s2w.get("bind")?.dropped ?? []) as string[];
   const flag = s2w.get("anomaly")?.flag as AnomalyFlag | null;
 
