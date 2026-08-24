@@ -17,7 +17,37 @@
       "Bash(lake build:*)",
       "Bash(git status)",
       "Bash(git diff:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(cd helix:*)",
+      "Bash(cd proofs:*)",
+      "Bash(bun run judge:*)",
+      "Bash(bun src/judge.ts:*)",
+      "Bash(bun run dogfood:*)",
+      "Bash(bun run listen:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/guard-spec-writes.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/postcheck-verify-spec.sh"
+          }
+        ]
+      }
     ]
   }
 }
