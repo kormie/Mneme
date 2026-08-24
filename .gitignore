@@ -5,3 +5,4 @@ proofs/Mneme/
 *.olean
 .DS_Store
 helix/traces/
+helix/store/
