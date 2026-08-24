@@ -14,8 +14,11 @@ This is a laptop tool for the operator's own notes. It is not a KOHO
 product feature and touches no KOHO system.
 
 Notes you drop by hand are the `file` channel. Live channels — Claude
-Code sessions today — arrive through the sensory adapter loop instead:
-see [ADAPTER.md](ADAPTER.md).
+Code sessions today — arrive through the sensory adapter loop instead
+([ADAPTER.md](ADAPTER.md)): the listener fills an L0 buffer file, and
+`--buffer` drains that buffer through the very same write path as the
+inbox. Either way, nothing becomes memory except by a tray run you
+started, one `core.permit` per commit.
 
 ## What it is, and is not
 
@@ -111,6 +114,11 @@ $EDITOR ~/mneme-tray/$(date +%F)-standup.md
 # end of day: ingest (idempotent — rerun any time)
 npx tsx src/tray.ts --inbox ~/mneme-tray
 
+# also end of day, if the adapter listener has been running: drain the
+# L0 sensory buffer it filled (same write path, same permits, same
+# quarantine; idempotent — packet ids are the memory keys)
+npx tsx src/tray.ts --buffer ~/.mneme/buffer.ndjson
+
 # later, from memory:
 npx tsx src/tray.ts --ask "what did I write about Jordan?"
 npx tsx src/tray.ts --ask "CI flake"
@@ -139,13 +147,19 @@ refuses the Graft shape outright):
    as fixtures; anything you write as markdown works.
 3. ✅ **The read path** — `--ask` runs `query → hybrid → rerank → inject`
    over the persistent store.
+4. ✅ **The buffer drains** — `--buffer` commits what the adapter
+   listener buffered, through the same permit-gated write path as the
+   inbox; entries remember their channel, and packet ids are the memory
+   keys, so re-delivery and re-drains replace instead of duplicating.
+   The hook still never commits, and retrieve-on-submit is still absent
+   (ADAPTER.md).
 
 Next, in rank order:
 
-4. **Better retrieval.** Body keywords are indexed now; still open:
+5. **Better retrieval.** Body keywords are indexed now; still open:
    multi-note synthesis, phrase queries, and a date-aware "what happened
    last week" — all deterministic, all within the declared graph.
-5. **Steward-gated proposals only.** Richer structural edges live in the
+6. **Steward-gated proposals only.** Richer structural edges live in the
    frozen `structural` transform, and this whole domain belongs to the
    `agora` twin eventually — both go to Kormie as graph diffs, not code.
 
