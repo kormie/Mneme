@@ -44,7 +44,8 @@ one permit-gated write path `bun run dogfood` runs.
    returns — it is a long-lived daemon, not a one-shot command. By
    default it listens on `~/.mneme/helix.sock`, sweeps
    `~/.mneme/spool` every five seconds, appends clean packets to
-   `~/.mneme/buffer.ndjson`, and writes a trace to
+   `~/.mneme/buffer.jsonl` (or legacy `~/.mneme/buffer.ndjson` when it
+   contains packets and `buffer.jsonl` does not), and writes a trace to
    `helix/traces/listen.json` after every batch. Do not start a second
    listener if one is already running.
 

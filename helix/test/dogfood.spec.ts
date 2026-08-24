@@ -11,6 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "bun:test";
+import { defaultBufferFile } from "../src/buffer-path.js";
 import { judge } from "../src/judge.js";
 import { loadKernel } from "../src/kernel.js";
 import { isObservation, type Observation } from "../src/observation.js";
@@ -134,6 +135,18 @@ describe("--dogfood source resolution", () => {
     writeFileSync(bufferFile, JSON.stringify(fixturePacket()) + "\n");
     const src = dogfoodSource(bufferFile, join(HELIX_ROOT, "fixtures", "tray"));
     expect(src.kind).toBe("buffer");
+  });
+
+  it("finds a populated legacy buffer behind jsonl content with no valid packets", () => {
+    const dir = tmp("legacy");
+    const packet = fixturePacket();
+    writeFileSync(join(dir, "buffer.jsonl"), "\nnot an Observation\n");
+    writeFileSync(join(dir, "buffer.ndjson"), JSON.stringify(packet) + "\n");
+    const selected = defaultBufferFile(dir);
+    const src = dogfoodSource(selected, join(dir, "no-inbox"));
+    expect(selected).toBe(join(dir, "buffer.ndjson"));
+    expect(src.kind).toBe("buffer");
+    if (src.kind === "buffer") expect(src.packets).toEqual([packet]);
   });
 
   it("drains nothing when buffer and inbox are both empty: exit 0, no write", async () => {

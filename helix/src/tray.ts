@@ -16,10 +16,11 @@
  * refuses to interpret steward-authored clauses, so a non-empty
  * constitution needs a real ValueFilter first.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { basename, dirname, join, resolve } from "node:path";
+import { defaultBufferFile } from "./buffer-path.js";
 import { judge, type Judgement } from "./judge.js";
 import { loadKernel, type KernelIR } from "./kernel.js";
 import { makeEmitter, runGraph, type Appliers, type Emitter } from "./scheduler.js";
@@ -599,15 +600,6 @@ function checksOk(checks: Checks): boolean {
   return Object.values(checks).every(Boolean);
 }
 
-/** Same rule as listen.defaultBufferFile (kept here: listen imports tray). */
-function dogfoodBufferPath(): string {
-  const base = join(homedir(), ".mneme");
-  const jsonl = join(base, "buffer.jsonl");
-  const ndjson = join(base, "buffer.ndjson");
-  return !existsSync(jsonl) && existsSync(ndjson) ? ndjson : jsonl;
-}
-
-
 /**
  * Print the drain digest shared by every write mode (--inbox, --buffer,
  * --dogfood): what was quarantined, deferred, and committed, then the
@@ -795,7 +787,7 @@ function main(): void {
     // With --dogfood, --buffer and --inbox merely relocate the documented
     // defaults; source preference (buffer first) stays the same.
     process.exitCode = runDogfood(
-      buffer ?? dogfoodBufferPath(),
+      buffer ?? defaultBufferFile(join(homedir(), ".mneme")),
       inbox ?? join(homedir(), "mneme-tray"),
       storeFile,
       out ?? join(HELIX_ROOT, "traces", "dogfood.json"),

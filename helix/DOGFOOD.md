@@ -110,8 +110,9 @@ L0 buffer — [ADAPTER.md](ADAPTER.md)) plus **one operator command**:
 bun run dogfood                  # equivalent: bun src/tray.ts --dogfood
 ```
 
-One run, no flags: it reads `~/.mneme/buffer.jsonl` if the buffer holds
-packets, else falls back to the documented inbox default `~/mneme-tray`
+One run, no flags: it reads `~/.mneme/buffer.jsonl` when it holds packets,
+otherwise a legacy `~/.mneme/buffer.ndjson` that holds packets, else the
+documented inbox default `~/mneme-tray`
 (markdown notes you dropped by hand); drains whichever it found through
 the one permit-gated write path (one `core.permit` consumed per
 `store.write`, only the `audit.inbox` report permit-exempt); writes the
