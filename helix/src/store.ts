@@ -12,6 +12,9 @@ export interface Episode {
   note: string;
   title: string;
   headings: string[];
+  /** Adapter channel that observed it ("file" for dropped notes). Absent
+   * in stores written before live channels existed; read as "file". */
+  channel?: string;
 }
 
 export interface Triple {

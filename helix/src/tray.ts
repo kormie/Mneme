@@ -1,9 +1,12 @@
 /**
- * Desk-tray dogfood (ADR-013 slice). A local-only CLI: the operator drops
- * their own markdown notes into an inbox directory; the scheduler runs the
- * declared kernel graphs over them, commits episodes and triples to a
- * small local JSON store, and emits a mneme.trace/v1 file. `--ask` runs
- * the declared pg-w2l read path over the store instead.
+ * Desk-tray dogfood (ADR-013 slice). A local-only CLI with two ingest
+ * sources and one write path: the operator drops markdown notes into an
+ * inbox directory (`--inbox`), or drains the L0 sensory buffer the
+ * adapter listener fills (`--buffer`, ndjson of Observation packets).
+ * Either way the scheduler runs the declared kernel graphs, commits
+ * episodes and triples to a small local JSON store — one core.permit per
+ * store.write — and emits a mneme.trace/v1 file. `--ask` runs the
+ * declared pg-w2l read path over the store instead.
  *
  * Everything here is offline and deterministic. Prompt nodes run local
  * stand-in appliers — no model, no network. Frozen-surface transforms
@@ -19,7 +22,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { loadKernel, type KernelIR } from "./kernel.js";
 import { makeEmitter, runGraph, type Appliers, type Emitter } from "./scheduler.js";
 import { type AnomalyFlag, type AnomalyMatch } from "./anomaly.js";
-import type { Observation } from "./observation.js";
+import { parseObservation, type Observation } from "./observation.js";
 import { sensoryAppliers, type SensedObs } from "./sensory.js";
 import {
   loadStore,
@@ -121,6 +124,7 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): App
         note: obs.id,
         title: obs.title,
         headings: obs.headings,
+        channel: obs.channel,
         text: obs.text,
       }));
       return { episodes };
@@ -136,6 +140,7 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): App
       const kept = inputs.kept as (Episode & { text?: string })[];
       const triples: Triple[] = kept.flatMap((ep) => [
         { s: ep.note, p: "titled", o: ep.title },
+        { s: ep.note, p: "channel", o: ep.channel ?? "file" },
         ...ep.headings.map((h) => ({ s: ep.note, p: "heading", o: h })),
         ...bodyKeywords(ep.text ?? "").map((o) => ({ s: ep.note, p: "mentions", o })),
       ]);
@@ -160,6 +165,7 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): App
           note,
           title: ts.find((t) => t.p === "titled")?.o ?? note,
           headings: ts.filter((t) => t.p === "heading").map((t) => t.o),
+          channel: ts.find((t) => t.p === "channel")?.o ?? "file",
         };
         return [
           { store: "episodic", key: episode.id, value: episode },
@@ -377,24 +383,59 @@ export function permitPairing(
   return pairs;
 }
 
-export function runTray(
-  inboxDir: string,
-  storeFile: string,
-  kernel: KernelIR = loadKernel(),
-  maxSlots = 64,
-): TrayReport {
+/** The `file` channel: every markdown note in the inbox, one packet each. */
+export function readInbox(inboxDir: string): Observation[] {
   const files = readdirSync(inboxDir)
     .filter((f) => f.endsWith(".md"))
     .sort();
   if (files.length === 0) throw new Error(`no .md notes in inbox: ${inboxDir}`);
-  const raw: Observation[] = files.map((f) => ({
+  return files.map((f) => ({
     id: basename(f),
     t: Math.floor(statSync(join(inboxDir, f)).mtimeMs),
     channel: "file",
     kind: "note",
     text: readFileSync(join(inboxDir, f), "utf8"),
   }));
+}
 
+/**
+ * Read the L0 sensory buffer the listener fills (ADAPTER.md): one
+ * Observation packet per line. Delivery is at-least-once, so a
+ * re-delivered id replaces the earlier line rather than becoming a
+ * second packet. Non-packet lines are counted and skipped — one bad
+ * line must not block the drain. The file itself is never consumed or
+ * truncated here: memory is keyed, so re-draining replaces instead of
+ * duplicating, and the operator rotates the buffer on their own terms.
+ */
+export function readBuffer(
+  bufferFile: string,
+): { packets: Observation[]; skipped: number } {
+  const byId = new Map<string, Observation>();
+  let skipped = 0;
+  for (const line of readFileSync(bufferFile, "utf8").split("\n")) {
+    if (line.trim() === "") continue;
+    const packet = parseObservation(line);
+    if (packet === null) skipped += 1;
+    else byId.set(packet.id, packet);
+  }
+  if (byId.size === 0) {
+    throw new Error(`no Observation packets in buffer: ${bufferFile}`);
+  }
+  return { packets: [...byId.values()], skipped };
+}
+
+/**
+ * Drain one batch of Observation packets into long-term memory: pg-s2w
+ * (anomaly gate included) → pg-w2l (one core.permit per store.write) →
+ * pg-audit. Both ingest sources — the markdown inbox and the sensory
+ * buffer — end up here, so there is exactly one write path.
+ */
+export function drainPackets(
+  raw: Observation[],
+  storeFile: string,
+  kernel: KernelIR = loadKernel(),
+  maxSlots = 64,
+): TrayReport {
   const store = loadStore(storeFile);
   const emitter = makeEmitter();
   const appliers = trayAppliers(kernel, emitter, store);
@@ -434,7 +475,7 @@ export function runTray(
 
   const trace = makeTraceFile(kernel.spec, emitter.events);
   return {
-    notes: files,
+    notes: raw.map((p) => p.id),
     quarantined: flag?.matches ?? [],
     deferred,
     committed: episodes.map((e) => e.note),
@@ -446,6 +487,15 @@ export function runTray(
     permitPairs: permitPairing(trace.events),
     counts: eventHistogram(trace.events),
   };
+}
+
+export function runTray(
+  inboxDir: string,
+  storeFile: string,
+  kernel: KernelIR = loadKernel(),
+  maxSlots = 64,
+): TrayReport {
+  return drainPackets(readInbox(inboxDir), storeFile, kernel, maxSlots);
 }
 
 export interface AskReport {
@@ -510,22 +560,30 @@ function main(): void {
     throw e;
   });
   const args = process.argv.slice(2);
-  let inbox = join(HELIX_ROOT, "fixtures", "tray");
+  let inbox: string | null = null;
+  let buffer: string | null = null;
   let out: string | null = null;
   let storeFile = join(HELIX_ROOT, "store", "tray.json");
   let ask: string | null = null;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i] as string;
-    if (flag === "--inbox" || flag === "--out" || flag === "--store" || flag === "--ask") {
+    if (
+      flag === "--inbox" || flag === "--buffer" || flag === "--out" ||
+      flag === "--store" || flag === "--ask"
+    ) {
       const value = args[++i];
       if (value === undefined) throw new Error(`missing value for ${flag}`);
       if (flag === "--inbox") inbox = resolve(value);
+      else if (flag === "--buffer") buffer = resolve(value);
       else if (flag === "--out") out = resolve(value);
       else if (flag === "--store") storeFile = resolve(value);
       else ask = value;
     } else {
       throw new Error(`unknown argument: ${flag}`);
     }
+  }
+  if (inbox !== null && buffer !== null) {
+    throw new Error("choose one ingest source per run: --inbox or --buffer");
   }
 
   if (ask !== null) {
@@ -552,15 +610,25 @@ function main(): void {
     return;
   }
 
-  let inboxStat;
-  try {
-    inboxStat = statSync(inbox);
-  } catch {
-    throw new Error(`inbox not found: ${inbox}`);
+  let report: TrayReport;
+  let sourceLine: string;
+  if (buffer !== null) {
+    const { packets, skipped } = readBuffer(buffer);
+    report = drainPackets(packets, storeFile);
+    sourceLine = `tray: ${report.notes.length} packet(s) from buffer ${buffer}` +
+      (skipped > 0 ? ` (${skipped} non-packet line(s) skipped)` : "");
+  } else {
+    const inboxDir = inbox ?? join(HELIX_ROOT, "fixtures", "tray");
+    let inboxStat;
+    try {
+      inboxStat = statSync(inboxDir);
+    } catch {
+      throw new Error(`inbox not found: ${inboxDir}`);
+    }
+    if (!inboxStat.isDirectory()) throw new Error(`inbox is not a directory: ${inboxDir}`);
+    report = runTray(inboxDir, storeFile);
+    sourceLine = `tray: ${report.notes.length} notes from ${inboxDir}`;
   }
-  if (!inboxStat.isDirectory()) throw new Error(`inbox is not a directory: ${inbox}`);
-
-  const report = runTray(inbox, storeFile);
   const outFile = out ?? join(HELIX_ROOT, "traces", "tray.json");
   writeTrace(report.trace, outFile);
 
@@ -572,7 +640,7 @@ function main(): void {
   const writes = ev.filter((e) => e.type === "store.write");
   const auditWrites = writes.filter((w) => w.type === "store.write" && w.store === "audit.inbox");
 
-  console.log(`tray: ${report.notes.length} notes from ${inbox}`);
+  console.log(sourceLine);
   if (report.quarantined.length > 0) {
     console.log(
       "quarantined (this version stayed out of memory; a previously committed clean version may still be remembered):",
@@ -589,7 +657,7 @@ function main(): void {
   console.log("committed:");
   for (const ep of report.episodes) {
     const t = report.triples.filter((x) => x.s === ep.note).length;
-    console.log(`  - ${ep.note}: "${ep.title}" → ${t} triples`);
+    console.log(`  - ${ep.note} [${ep.channel ?? "file"}]: "${ep.title}" → ${t} triples`);
   }
   console.log(`memory: ${storeFile}`);
   console.log(`audit: pg-w2l prompt corpus, ${report.auditFlags} heuristic flags → steward inbox`);

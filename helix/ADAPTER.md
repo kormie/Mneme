@@ -6,7 +6,8 @@ pushes **Observation packets**; the listener (`src/listen.ts`) accepts
 them, feeds each batch to pg-s2w's declared ingress `raw`, and appends
 the clean packets to a local sensory buffer file. That is the whole
 loop. Nothing here commits long-term memory, and nothing here reads
-anything back out.
+anything back out — committing what the buffer holds is a separate,
+operator-initiated tray drain (see "Draining the buffer into memory").
 
 This ships one real adapter — Claude Code hooks — plus the `file`
 channel the desk tray already uses ([DOGFOOD.md](DOGFOOD.md)).
@@ -58,6 +59,32 @@ never buffered, never logged verbatim. The listener's trace contains
 `node.enter`/`node.exit`/`edge.fire`/`store.read` events only: no
 `store.write`, no permits needed, and the printed checks fail the run if
 an install, ack, or mint ever appears.
+
+## Draining the buffer into memory
+
+The listener only fills the L0 buffer; nothing becomes long-term memory
+until the operator says so. The hook never commits, the listener never
+commits — committing is a tray run over what the buffer holds:
+
+```sh
+cd helix
+npm run tray -- --buffer ~/.mneme/buffer.ndjson
+```
+
+The drain feeds the buffered packets through exactly the write path
+markdown notes take ([DOGFOOD.md](DOGFOOD.md)): pg-s2w re-screens every
+packet at the anomaly gate, then pg-w2l consolidates under Core — one
+`core.permit` consumed per `store.write`, with only the `audit.inbox`
+report permit-exempt. A packet that survives the gate reaches the store
+with its channel remembered, so `--ask` answers over claude-code
+observations and desk notes alike; a quarantined packet's id never
+appears among the trace's `store.write` keys.
+
+The packet `id` is the memory key. Delivery is at-least-once and the
+drain is idempotent: a re-delivered id in the buffer, or a re-run of the
+whole drain, replaces the entry instead of duplicating it. The buffer
+file itself is left in place — rotate or delete it whenever you like;
+re-draining afterwards changes nothing.
 
 ## Installing the Claude Code hook
 
