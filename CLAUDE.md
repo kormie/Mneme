@@ -17,14 +17,15 @@ The steward is Kormie (@kormie). Agents implement; the human steers.
 - `scripts/sync-lean.sh` — regenerates `proofs/Mneme/` from `spec/lean/`.
 - `proofs/` — Lake project wrapping the pack's Lean laws.
   `proofs/Mneme/` is generated and gitignored; never edit it.
-- `helix/` — the ADR-013 slice. TypeScript, Node 22+, vitest.
+- `helix/` — the ADR-013 slice. TypeScript on Bun 1.3+ (`bun test`);
+  the Claude Code hook adapter stays dependency-free Node.
 
 ## Commands
 
 ```sh
 ./scripts/verify-spec.sh              # spec integrity (run before and after work)
-cd helix && npm ci && npm test        # Helix tests
-cd helix && npm run typecheck         # strict tsc
+cd helix && bun install && bun test   # Helix tests
+cd helix && bun run typecheck         # strict tsc
 ./scripts/sync-lean.sh                # refresh generated Lean sources
 cd proofs && lake build               # check all laws + Regressions (elan/Lean 4.33.1)
 ```

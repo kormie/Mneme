@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { loadKernel } from "../src/kernel.js";
 import { drainSpool, listenChecks, processBatch, senseBatch } from "../src/listen.js";
 import { isObservation, parseObservation, type Observation } from "../src/observation.js";

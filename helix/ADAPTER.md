@@ -41,8 +41,8 @@ an extension: the loader still mirrors `spec/kernel.json` verbatim.
 
 ```sh
 cd helix
-npm ci
-npx tsx src/listen.ts
+bun install
+bun run listen
 ```
 
 By default it listens on the unix socket `~/.mneme/helix.sock`, sweeps
@@ -68,7 +68,7 @@ commits — committing is a tray run over what the buffer holds:
 
 ```sh
 cd helix
-npm run tray -- --buffer ~/.mneme/buffer.ndjson
+bun run tray --buffer ~/.mneme/buffer.ndjson
 ```
 
 The drain feeds the buffered packets through exactly the write path

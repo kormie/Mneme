@@ -18,7 +18,7 @@ it is the shortest accurate description of the rules of this repo.
 
 ```sh
 ./scripts/verify-spec.sh              # pack integrity
-cd helix && npm ci && npm test        # Helix (Node 22+)
+cd helix && bun install && bun test   # Helix (Bun 1.3+)
 ./scripts/sync-lean.sh
 cd proofs && lake build               # laws + regression suite (Lean 4.33.1 via elan)
 ```
