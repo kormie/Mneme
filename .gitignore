@@ -4,3 +4,4 @@ proofs/Mneme/
 .lake/
 *.olean
 .DS_Store
+helix/traces/
