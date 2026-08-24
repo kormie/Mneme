@@ -176,6 +176,58 @@ describe("the claude-code hook process", () => {
     expect(spooled[0]?.text).toContain("/home/operator/project");
   });
 
+  it("observes nothing for the injected <task-notification> turn", async () => {
+    // The harness injects a literal "<task-notification>" user turn when
+    // background work reports back. That is task chrome, not the human:
+    // the hook must exit 0 having written nothing — no socket, no spool.
+    const dir = tmp("chrome");
+    const sockPath = join(dir, "s.sock");
+    const spool = join(dir, "spool");
+    let connections = 0;
+    const server: Server = createServer((sock) => {
+      connections += 1;
+      sock.on("data", () => {});
+    });
+    await new Promise<void>((ready) => server.listen(sockPath, ready));
+    const stdin = readFileSync(join(FIXTURES, "hook-task-notification.json"), "utf8");
+    const child = run("node", [HOOK], {
+      env: { ...process.env, MNEME_SOCK: sockPath, MNEME_SPOOL: spool },
+    });
+    child.child.stdin?.end(stdin);
+    const { stdout } = await child; // execFile rejects on a non-zero exit
+    server.close();
+    expect(stdout).toBe("");
+    console.log(`socket connections: ${connections}`);
+    expect(connections).toBe(0);
+    expect(existsSync(spool)).toBe(false);
+  });
+
+  it("trims before matching the task-notification text, and matches only exactly", async () => {
+    const dir = tmp("chrome-trim");
+    const spool = join(dir, "spool");
+    const env = { ...process.env, MNEME_SOCK: join(dir, "no.sock"), MNEME_SPOOL: spool };
+    // Surrounding whitespace still marks the injected turn: nothing spooled.
+    const padded = run("node", [HOOK], { env });
+    padded.child.stdin?.end(JSON.stringify({
+      hook_event_name: "UserPromptSubmit",
+      prompt: "  <task-notification>\n",
+    }));
+    await padded;
+    expect(existsSync(spool)).toBe(false);
+    // A prompt that merely mentions the marker is a real user prompt —
+    // the sensor checks identity of the whole text, it never parses prose.
+    const mention = run("node", [HOOK], { env });
+    mention.child.stdin?.end(JSON.stringify({
+      hook_event_name: "UserPromptSubmit",
+      prompt: "Why does the harness send <task-notification> turns?",
+    }));
+    await mention;
+    const spooled = drainSpool(spool);
+    expect(spooled).toHaveLength(1);
+    expect(spooled[0]?.kind).toBe("user-prompt");
+    expect(spooled[0]?.text).toBe("Why does the harness send <task-notification> turns?");
+  });
+
   it("exits 0 on malformed stdin and on events it does not observe", async () => {
     const dir = tmp("noop");
     const spool = join(dir, "spool");
@@ -187,6 +239,30 @@ describe("the claude-code hook process", () => {
     other.child.stdin?.end(JSON.stringify({ hook_event_name: "PreToolUse" }));
     await other;
     expect(existsSync(spool)).toBe(false);
+  });
+});
+
+describe("session punctuation stays in L0", () => {
+  const stopPacket = JSON.parse(
+    readFileSync(join(FIXTURES, "claude-code-session-stop.json"), "utf8"),
+  ) as Observation;
+
+  it("scores session-stop below the gate: buffered, never bound", () => {
+    expect(isObservation(stopPacket)).toBe(true);
+    const emitter = makeEmitter();
+    const bufferFile = join(tmp("stop-l0"), "buffer.jsonl");
+    const batch = processBatch(kernel, [stopPacket, fixturePacket()], emitter, bufferFile);
+    // Both packets are clean, so both reach the L0 buffer (observe)…
+    expect(batch.accepted.sort()).toEqual([stopPacket.id, fixturePacket().id].sort());
+    const lines = readFileSync(bufferFile, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(2);
+    // …but only the user prompt clears the gate into a working slot.
+    console.log(`slots for [session-stop, user-prompt]: ${batch.slots}`);
+    expect(batch.slots).toBe(1);
+    expect(batch.quarantined).toEqual([]);
+    expect(batch.deferred).toEqual([]);
+    const { slots } = senseBatch(kernel, [stopPacket, fixturePacket()], makeEmitter());
+    expect(slots.map((s) => s.obs.kind)).toEqual(["user-prompt"]);
   });
 });
 

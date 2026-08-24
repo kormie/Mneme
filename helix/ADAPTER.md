@@ -125,7 +125,17 @@ your clone:
 
 On `UserPromptSubmit` the hook packages the submitted prompt as a
 `user-prompt` packet; on `Stop` it records only that a session ended and
-in which directory (`session-stop`). Other events observe nothing. The
+in which directory (`session-stop`). Other events observe nothing.
+
+A `session-stop` packet is sensory punctuation, not long-term memory:
+the salience stand-in scores it 0 from the packet's declared `kind`, and
+the gate honours that score, so it may sit in the L0 buffer as a record
+that a session ended but never binds into a working slot and never
+reaches the store when the buffer is drained. Task chrome is not a user
+prompt either: when the harness injects a literal `<task-notification>`
+turn to report background work, the hook observes nothing at all — an
+identity check on the exact prompt text (trimmed), not prose parsing,
+and no further strings join that check without the steward. The
 hook writes the packet to the socket and exits 0; if the socket is down
 it spools the packet as one JSON file under `~/.mneme/spool` and still
 exits 0 — the listener drains the spool when it is next up. A hook must

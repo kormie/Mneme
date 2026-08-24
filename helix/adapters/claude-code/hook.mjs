@@ -27,6 +27,14 @@ function packetFor(hook) {
   const t = Date.now();
   const base = { id: `cc-${t}-${randomUUID().slice(0, 8)}`, t, channel: "claude-code" };
   if (hook.hook_event_name === "UserPromptSubmit" && typeof hook.prompt === "string") {
+    // Harness chrome, not the human: Claude Code injects a literal
+    // "<task-notification>" turn when background work reports back. The
+    // payload carries no field marking injected turns, so the sensor
+    // drops that one exact text (trimmed) and observes nothing. This is
+    // an identity check on the whole prompt, not prose parsing: no
+    // other string is interpreted, and no denylist grows here without
+    // the steward.
+    if (hook.prompt.trim() === "<task-notification>") return null;
     return { ...base, kind: "user-prompt", text: hook.prompt };
   }
   if (hook.hook_event_name === "Stop") {

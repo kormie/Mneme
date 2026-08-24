@@ -1,0 +1,7 @@
+{
+  "id": "cc-fixture-stop-0001",
+  "t": 1756000000005,
+  "channel": "claude-code",
+  "kind": "session-stop",
+  "text": "claude-code session stopped (cwd: /home/operator/project)"
+}
