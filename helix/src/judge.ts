@@ -145,7 +145,11 @@ export interface Judgement {
   attacksAllRed: boolean;
   decidable: { pass: number; fail: number };
   temporal: { pass: number; fail: number; skip: number };
-  /** Temporal safety fails on a provided trace (liveness excluded). */
+  /** Conjuncts of Mneme.Trace.Temporal with no INV id in inhabitants.md
+   *  (ValidTrace, ProposeNotInstall); empty when no trace is given. */
+  supplementary: { lean: string; status: Status }[];
+  /** Temporal safety fails on a provided trace (liveness excluded),
+   *  supplementary conjuncts included. */
   traceSafetyFails: string[];
   judged: boolean;
 }
@@ -200,22 +204,28 @@ export function judge(kernel: KernelIR, events?: TraceEvent[]): Judgement {
     fail: rows.filter((r) => r.kind === "temporal" && r.status === "fail").length,
     skip: rows.filter((r) => r.kind === "temporal" && r.status === "skip").length,
   };
-  const traceSafetyFails = rows
-    .filter((r) => r.kind === "temporal" && r.status === "fail" && !r.liveness)
-    .map((r) => r.id);
+  const supplementary = events === undefined ? [] : supplementaryTemporal(kernel, events);
+  const traceSafetyFails = [
+    ...rows
+      .filter((r) => r.kind === "temporal" && r.status === "fail" && !r.liveness)
+      .map((r) => r.id),
+    ...supplementary.filter((s) => s.status === "fail").map((s) => s.lean),
+  ];
   return {
     rows,
     attacks,
     attacksAllRed,
     decidable,
     temporal,
+    supplementary,
     traceSafetyFails,
     judged: decidable.fail === 0 && traceSafetyFails.length === 0,
   };
 }
 
 /** Supplementary temporal conjuncts of Mneme.Trace.Temporal that carry no
- *  INV id in inhabitants.md but still gate RuntimeCertificate. */
+ *  INV id in inhabitants.md but still gate RuntimeCertificate. Folded into
+ *  judge()'s traceSafetyFails whenever a trace is judged. */
 export function supplementaryTemporal(
   kernel: KernelIR,
   events: TraceEvent[],
@@ -228,6 +238,11 @@ export function supplementaryTemporal(
 
 export interface RuntimeAttempt {
   blocked: boolean;
+  /** true only when the block is the documented SPEC ISSUE #2: the run
+   *  reached holdout through declared edges and the scheduler threw on
+   *  the undeclared tau guard. Any other throw is an unexpected failure,
+   *  never to be reported as BLOCKED-RUNTIME. */
+  tauBlocked: boolean;
   entered: string[];
   error?: string;
 }
@@ -262,23 +277,28 @@ export function attemptRuntimeRun(kernel: KernelIR): RuntimeAttempt {
     "pg-adl/partition-propose": () => ({ spec: null }),
     "pg-adl/lineage-record": (inputs) => ({ ack: { spec: inputs.spec } }),
   };
+  const entered = (): string[] =>
+    emitter.events
+      .filter((e) => e.type === "node.enter")
+      .map((e) => (e.type === "node.enter" ? e.node : ""));
   try {
     runGraph(kernel, "pg-adl", { ltm: { batches: 1 }, fuel: {} }, appliers, emitter);
   } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    const nodes = entered();
     return {
       blocked: true,
-      entered: emitter.events
-        .filter((e) => e.type === "node.enter")
-        .map((e) => (e.type === "node.enter" ? e.node : "")),
-      error: err instanceof Error ? err.message : String(err),
+      // BLOCKED-RUNTIME is claimed only for the tau guard itself, fired
+      // after the run legitimately reached holdout — any other throw
+      // (missing applier, ingress drift, scheduler bug) must not
+      // masquerade as the documented spec issue.
+      tauBlocked: /guard.*tau|tau.*guard|score < tau|score >= tau/.test(error) &&
+        nodes.includes("holdout"),
+      entered: nodes,
+      error,
     };
   }
-  return {
-    blocked: false,
-    entered: emitter.events
-      .filter((e) => e.type === "node.enter")
-      .map((e) => (e.type === "node.enter" ? e.node : "")),
-  };
+  return { blocked: false, tauBlocked: false, entered: entered() };
 }
 
 function pad(s: string, n: number): string {
@@ -324,13 +344,18 @@ export function main(argv: string[]): number {
     const a = argv[i];
     if (a === "--trace") {
       const v = argv[++i];
-      if (v === undefined) throw new Error("missing value for --trace");
+      if (v === undefined || v.startsWith("--")) {
+        throw new Error("missing value for --trace");
+      }
       tracePath = resolve(v);
     } else if (a === "--runtime") {
       runtime = true;
     } else {
       throw new Error(`unknown argument: ${a}`);
     }
+  }
+  if (runtime && tracePath !== null) {
+    throw new Error("choose one mode per run: --runtime or --trace");
   }
 
   const kernel = loadKernel();
@@ -340,7 +365,7 @@ export function main(argv: string[]): number {
     console.log("through its declared abstraction path with routing stand-ins…");
     const attempt = attemptRuntimeRun(kernel);
     console.log(`  nodes entered (declared edges only): ${attempt.entered.join(" → ")}`);
-    if (attempt.blocked) {
+    if (attempt.tauBlocked) {
       console.log(`  scheduler failed closed: ${attempt.error}`);
       console.log("");
       console.log("BLOCKED-RUNTIME: SPEC ISSUE #2 — pg-adl guards a6 (`score < tau`) and a7");
@@ -352,6 +377,13 @@ export function main(argv: string[]): number {
       console.log("steward ships the 0.11 fix (declare tau in pg-adl ingress, or fold it into");
       console.log("holdout's frozen configuration).");
       return 0;
+    }
+    if (attempt.blocked) {
+      console.log(`  scheduler threw: ${attempt.error}`);
+      console.log("  UNEXPECTED failure: this is NOT the documented tau blockage (SPEC ISSUE");
+      console.log("  #2) — the probe did not fail on the a6/a7 guard after reaching holdout.");
+      console.log("  Something else broke; investigate before claiming BLOCKED-RUNTIME.");
+      return 1;
     }
     console.log("  UNEXPECTED: the tau guards evaluated. Someone declared or invented tau —");
     console.log("  that is a spec change, not progress. Stop and ask the steward.");
@@ -365,6 +397,9 @@ export function main(argv: string[]): number {
     if (file.trace !== "mneme.trace/v1") {
       throw new Error(`not a mneme.trace/v1 file: ${tracePath}`);
     }
+    if (!Array.isArray(file.events)) {
+      throw new Error(`mneme.trace/v1 file has no events array: ${tracePath}`);
+    }
     events = file.events;
     label = `${tracePath} (${events.length} events)`;
   }
@@ -374,9 +409,8 @@ export function main(argv: string[]): number {
   if (events !== undefined) {
     console.log("");
     console.log("  temporal conjuncts of Mneme.Trace.Temporal without an INV id:");
-    for (const s of supplementaryTemporal(kernel, events)) {
+    for (const s of j.supplementary) {
       console.log(`    ${pad(s.lean, 40)} ${s.status}`);
-      if (s.status === "fail") j.traceSafetyFails.push(s.lean);
     }
     const liveGaps = j.rows.filter((r) => r.liveness && r.status !== "pass");
     if (liveGaps.length > 0) {
@@ -386,7 +420,7 @@ export function main(argv: string[]): number {
       );
     }
   }
-  return j.judged && j.traceSafetyFails.length === 0 ? 0 : 1;
+  return j.judged ? 0 : 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

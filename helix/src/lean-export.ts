@@ -67,8 +67,12 @@ export function renderKernelIR(k: LeanKernel): string {
   push("--");
   push("-- Projection of the mneme.spec/0.10 kernel IR onto `Mneme.Kernel`:");
   push("-- ids, kinds, ports, edges, twins, frozen, layers. Prompt bodies are");
-  push("-- not in the IR and are not here (G2); labels, signatures, bodyHash,");
-  push("-- ingress, fuel, and audit policy have no Lean field and are dropped.");
+  push("-- not in the IR and are not here (G2). IR fields with no Lean");
+  push("-- counterpart are dropped: node labels/roles/signatures/bodyHash/");
+  push("-- promptRefs, edge `xor` (the exclusive-routing marker on pg-adl's");
+  push("-- a3/a4 and a6/a7 pairs — this certificate is blind to it), graph");
+  push("-- code/purpose/state/runtime, ingress, fuel, artifact metadata beyond");
+  push("-- `version`, layer idx/name, twin `never` prose, and the audit policy.");
   push("--");
   push("-- `certificate` below is the STATIC gate only: IR-certified, not");
   push("-- MNEME-complete (ADR-008). RuntimeCertificate needs a real trace.");

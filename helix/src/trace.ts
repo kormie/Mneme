@@ -37,15 +37,18 @@ export function makeTraceFile(spec: string, events: TraceEvent[]): TraceFile {
   return { trace: "mneme.trace/v1", spec, events };
 }
 
-/** Mirrors Mneme.Trace.validTraceB: every node/edge the log names exists. */
+/** Mirrors Mneme.Trace.validTraceB: every node/edge the log names exists.
+ *  Node lookup goes through the FIRST graph with a matching id, exactly as
+ *  Lean's `Kernel.findNode` (`List.find?`) does — on a kernel with
+ *  duplicated graph ids the two diverge otherwise. */
 export function validTrace(k: KernelIR, events: TraceEvent[]): boolean {
   return events.every((e) => {
     switch (e.type) {
       case "node.enter":
-      case "node.exit":
-        return k.graphs.some(
-          (g) => g.id === e.graph && g.nodes.some((n) => n.id === e.node),
-        );
+      case "node.exit": {
+        const g = k.graphs.find((x) => x.id === e.graph);
+        return g !== undefined && g.nodes.some((n) => n.id === e.node);
+      }
       case "edge.fire":
         return k.graphs.some((g) => g.edges.some((ed) => ed.id === e.edge));
       default:

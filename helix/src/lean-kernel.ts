@@ -4,9 +4,13 @@
  * the untrusted TypeScript judge folds its law mirrors over it, and the
  * Lean exporter serializes it into `proofs/KernelIR.lean` for the
  * `by decide` certificate. Projection only drops fields the Lean
- * structure does not carry (labels, roles, signatures, bodyHash,
- * promptRefs, ingress, fuel, audit policy — never prompt bodies, which
- * are not in the IR to begin with); it never adds or reinterprets.
+ * structure does not carry: node labels/roles/signatures/bodyHash/
+ * promptRefs, edge `xor` (the exclusive-routing marker on pg-adl's
+ * a3/a4 and a6/a7 pairs — the Lean `Edge` has no such field, so the
+ * certificate is blind to it), graph code/purpose/state/runtime,
+ * ingress, fuel, artifact metadata beyond `version`, layer idx/name,
+ * twin `never` prose, and the audit policy. Never prompt bodies, which
+ * are not in the IR to begin with. It never adds or reinterprets.
  */
 import type { KernelIR } from "./kernel.js";
 

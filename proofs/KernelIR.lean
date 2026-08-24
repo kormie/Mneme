@@ -3,8 +3,12 @@
 --
 -- Projection of the mneme.spec/0.10 kernel IR onto `Mneme.Kernel`:
 -- ids, kinds, ports, edges, twins, frozen, layers. Prompt bodies are
--- not in the IR and are not here (G2); labels, signatures, bodyHash,
--- ingress, fuel, and audit policy have no Lean field and are dropped.
+-- not in the IR and are not here (G2). IR fields with no Lean
+-- counterpart are dropped: node labels/roles/signatures/bodyHash/
+-- promptRefs, edge `xor` (the exclusive-routing marker on pg-adl's
+-- a3/a4 and a6/a7 pairs — this certificate is blind to it), graph
+-- code/purpose/state/runtime, ingress, fuel, artifact metadata beyond
+-- `version`, layer idx/name, twin `never` prose, and the audit policy.
 --
 -- `certificate` below is the STATIC gate only: IR-certified, not
 -- MNEME-complete (ADR-008). RuntimeCertificate needs a real trace.

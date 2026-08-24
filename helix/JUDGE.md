@@ -61,11 +61,19 @@ candidate" instead.
 | `HasClusterCut` / `HasArchiveSample`, tray trace | fail — liveness gap; blocks RuntimeCertificate only, exit code unaffected |
 | Attack trace predicate goes green | fail — a regression, never progress |
 
+The safety set includes the two Temporal conjuncts without an INV id,
+`ValidTrace` and `ProposeNotInstall`: a ghost-edge trace is a safety
+fail, not judged.
+
 Exit codes: `0` = judged (and, with `--trace`, no safety fail); `1` =
 any decidable fail, attack regression, or trace safety fail. For
-`--runtime`: `0` = the documented BLOCKED-RUNTIME outcome; `1` = the tau
-guards unexpectedly evaluated, which means someone changed the spec —
-stop and ask the steward.
+`--runtime`: `0` = the documented BLOCKED-RUNTIME outcome, claimed only
+when the probe actually reached holdout and the scheduler threw on the
+a6/a7 tau guard — any other throw is reported as an unexpected failure
+and exits `1`, never as BLOCKED-RUNTIME; `1` also covers the tau guards
+unexpectedly evaluating, which means someone changed the spec — stop
+and ask the steward. `--runtime` and `--trace` are mutually exclusive
+modes.
 
 ## SPEC ISSUE #1 — the bundled attacksRed theorem
 
@@ -121,3 +129,9 @@ demands the real run.
   tactic. `sorryAx` and `Lean.ofReduceBool` (native_decide) fail the
   build. The trace-law theorems in `Regressions.lean` stay at
   `[propext]`.
+- That widened carry is honestly reported, not silently accepted:
+  whether `[propext, Classical.choice, Quot.sound]` is an acceptable
+  axiom set for the static certificate is the steward's call (CLAUDE.md
+  rule 4 — accepting a Certificate is steward-gated), flagged explicitly
+  on the pull request. Until Kormie signs off, `KernelIR.certificate` is
+  a candidate the build keeps honest, not an accepted artifact.

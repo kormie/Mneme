@@ -20,6 +20,7 @@ import {
   installRequiresAck,
   proposeNotInstall,
   twinIdRequiresInstall,
+  validTrace,
   type TraceEvent,
 } from "../src/trace.js";
 
@@ -206,6 +207,7 @@ describe("runtime certificate attempt (SPEC ISSUE #2)", () => {
   it("fails closed on the undeclared tau guard — BLOCKED-RUNTIME", () => {
     const attempt = attemptRuntimeRun(kernel);
     expect(attempt.blocked).toBe(true);
+    expect(attempt.tauBlocked).toBe(true);
     expect(attempt.error).toContain("score < tau");
     // The scheduler legitimately reached holdout through declared edges…
     expect(attempt.entered).toEqual([
@@ -215,6 +217,68 @@ describe("runtime certificate attempt (SPEC ISSUE #2)", () => {
       "propose-abs",
       "holdout",
     ]);
+  });
+
+  it("does not report a non-tau failure as the documented blockage", () => {
+    // Drop pg-adl's fuel ingress binding: the probe now dies before the
+    // tau guard ever fires, and must NOT classify as tauBlocked.
+    const mutated = structuredClone(kernel);
+    const adl = mutated.graphs.find((g) => g.id === "pg-adl")!;
+    adl.ingress = adl.ingress.filter((i) => i.name !== "fuel");
+    const attempt = attemptRuntimeRun(mutated);
+    expect(attempt.blocked).toBe(true);
+    expect(attempt.tauBlocked).toBe(false);
+  });
+});
+
+describe("judge: safety conjuncts without an INV id gate judged", () => {
+  it("a ghost-edge trace is a safety fail, not judged", () => {
+    const j = judge(kernel, [
+      { type: "node.enter", graph: "pg-s2w", node: "salience", t: 0 },
+      { type: "edge.fire", edge: "zz9", kind: "data" },
+    ]);
+    expect(j.supplementary.find((s) => s.lean === "Mneme.Trace.ValidTrace")?.status).toBe("fail");
+    expect(j.traceSafetyFails).toContain("Mneme.Trace.ValidTrace");
+    expect(j.judged).toBe(false);
+  });
+
+  it("a propose-then-install adjacency is a safety fail, not judged", () => {
+    const j = judge(kernel, [
+      { type: "node.enter", graph: "pg-adl", node: "partition-propose", t: 0 },
+      { type: "partition.propose" },
+      { type: "steward.ack", id: "x" },
+      { type: "twin.install", id: "x" },
+    ]);
+    // InstallRequiresAck holds, but the ProposeNotInstall adjacency broke
+    // one event earlier than the ack — reorder to hit the adjacency:
+    const j2 = judge(kernel, [
+      { type: "node.enter", graph: "pg-adl", node: "partition-propose", t: 0 },
+      { type: "steward.ack", id: "x" },
+      { type: "partition.propose" },
+      { type: "twin.install", id: "x" },
+    ]);
+    expect(j.judged).toBe(true);
+    expect(j2.supplementary.find((s) => s.lean === "Mneme.Trace.ProposeNotInstall")?.status).toBe("fail");
+    expect(j2.judged).toBe(false);
+  });
+});
+
+describe("validTrace mirrors Lean's first-graph resolution", () => {
+  it("rejects a node that exists only in a later duplicate graph id", () => {
+    const dup = structuredClone(kernel);
+    const clone = structuredClone(dup.graphs.find((g) => g.id === "pg-s2w")!);
+    // First graph with id "dup-g" lacks the node; the second carries it.
+    const first = structuredClone(clone);
+    first.id = "dup-g";
+    first.nodes = first.nodes.filter((n) => n.id !== "salience");
+    const second = structuredClone(clone);
+    second.id = "dup-g";
+    dup.graphs.push(first, second);
+    const events: TraceEvent[] = [
+      { type: "node.enter", graph: "dup-g", node: "salience", t: 0 },
+    ];
+    // Lean's findNode looks only in the FIRST matching graph → false.
+    expect(validTrace(dup, events)).toBe(false);
   });
 });
 
