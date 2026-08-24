@@ -1,0 +1,50 @@
+# CODEOWNERS
+#
+# The steward (@kormie) owns the spec canon and the Lean law set. See
+# AGENTS.md / CLAUDE.md law #4 ("Steward gates") — changes under any of
+# these paths require @kormie's review before merge, not just a routine
+# approval.
+#
+# CODEOWNERS syntax notes: patterns are gitignore-style and rooted at the
+# repo when prefixed with "/"; "**" matches zero or more path segments;
+# the LAST matching pattern in this file wins for a given path (all
+# entries below share the same owner, so ordering has no effect here).
+
+# Canonical spec pack (read-only canon; law #1) — any diff here is a spec
+# change and must route through the steward's pack-import process.
+/spec/**            @kormie
+
+# Spec integrity manifest — must stay byte-consistent with /spec/**.
+/spec.sha256         @kormie
+
+# The negatives/regressions bridge — keeps the five attack traces red.
+/proofs/Regressions.lean @kormie
+
+# Any other Lean law-set sources under proofs/ (top-level and nested,
+# including the generated proofs/Mneme/ mirror).
+/proofs/*.lean       @kormie
+/proofs/**/*.lean    @kormie
+
+# Lean law-set sources under spec/lean/ — already covered by /spec/**
+# above; listed explicitly for clarity per the law-set ownership rule.
+/spec/lean/**        @kormie
+
+# The governance contract itself — a PR that weakens a steward gate or
+# quietly rewrites the law is exactly what CODEOWNERS exists to catch.
+/AGENTS.md           @kormie
+/CLAUDE.md            @kormie
+/CONTEXT.md           @kormie
+
+# The mechanical enforcement surface — settings.json's deny list and the
+# PreToolUse/PostToolUse hooks. A PR that narrows these removes the one
+# automated backstop this repo has.
+/.claude/settings.json @kormie
+/.claude/hooks/**       @kormie
+
+# This file and the integrity checkers it depends on — a PR that edits
+# any of these could silently disable the checks the rest of this file
+# relies on.
+/.github/CODEOWNERS       @kormie
+/.github/workflows/ci.yml @kormie
+/scripts/verify-spec.sh   @kormie
+/scripts/sync-lean.sh     @kormie

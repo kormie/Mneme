@@ -4,6 +4,9 @@
   "private": true,
   "description": "ADR-013 reference interpreter: pure scheduler over the mneme.spec/0.10 kernel IR, emitting mneme.trace/v1",
   "type": "module",
+  "engines": {
+    "bun": ">=1.3.11"
+  },
   "scripts": {
     "test": "bun test",
     "test:watch": "bun test --watch",

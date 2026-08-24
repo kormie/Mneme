@@ -163,7 +163,7 @@ export function renderKernelIR(k: LeanKernel): string {
   push("");
   push("/- Axiom guard (ADR-014): fail the build if `sorryAx` or");
   push("   `Lean.ofReduceBool` (native_decide) ever appears. `propext` is the");
-  push("   core axiom `decide` proofs carry on this toolchain (see CLAUDE.md,");
+  push("   core axiom `decide` proofs carry on this toolchain (see AGENTS.md,");
   push("   toolchain note). `Classical.choice` and `Quot.sound` enter through");
   push("   the v4.33.1 `String.Slice` machinery that `versioned`'s Decidable");
   push("   instance is *defined* with — they come from the toolchain's String");

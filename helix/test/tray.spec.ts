@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "bun:test";
 import { loadKernel } from "../src/kernel.js";
-import { permitPairing, runAsk, runTray } from "../src/tray.js";
+import { runAsk, runTray } from "../src/tray.js";
 import { loadStore } from "../src/store.js";
 import { commitAfterPermit, countType, validTrace, type TraceEvent } from "../src/trace.js";
 

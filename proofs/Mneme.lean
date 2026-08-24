@@ -4,7 +4,7 @@
 --
 -- Mneme.Negatives is deliberately NOT imported: its final theorem
 -- (attacksRed, line 55) fails Decidable synthesis as shipped in 0.10.
--- See SPEC ISSUE #1 in CLAUDE.md and proofs/Regressions.lean for the
+-- See SPEC ISSUE #1 in AGENTS.md and proofs/Regressions.lean for the
 -- bridge. When 0.11 fixes it: add `import Mneme.Negatives` back and
 -- delete Regressions.
 import Mneme.Kernel

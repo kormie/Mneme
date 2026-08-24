@@ -579,7 +579,7 @@ def certificate : Certificate := ⟨kernel, kernel_laws⟩
 
 /- Axiom guard (ADR-014): fail the build if `sorryAx` or
    `Lean.ofReduceBool` (native_decide) ever appears. `propext` is the
-   core axiom `decide` proofs carry on this toolchain (see CLAUDE.md,
+   core axiom `decide` proofs carry on this toolchain (see AGENTS.md,
    toolchain note). `Classical.choice` and `Quot.sound` enter through
    the v4.33.1 `String.Slice` machinery that `versioned`'s Decidable
    instance is *defined* with — they come from the toolchain's String
