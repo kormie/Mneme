@@ -1,7 +1,9 @@
 /**
  * Desk-tray dogfood (ADR-013 slice). A local-only CLI: the operator drops
  * their own markdown notes into an inbox directory; the scheduler runs the
- * declared kernel graphs over them and emits a mneme.trace/v1 file.
+ * declared kernel graphs over them, commits episodes and triples to a
+ * small local JSON store, and emits a mneme.trace/v1 file. `--ask` runs
+ * the declared pg-w2l read path over the store instead.
  *
  * Everything here is offline and deterministic. Prompt nodes run local
  * stand-in appliers — no model, no network. Frozen-surface transforms
@@ -11,11 +13,19 @@
  * refuses to interpret steward-authored clauses, so a non-empty
  * constitution needs a real ValueFilter first.
  */
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { basename, dirname, join, resolve } from "node:path";
 import { loadKernel, type KernelIR } from "./kernel.js";
 import { makeEmitter, runGraph, type Appliers, type Emitter } from "./scheduler.js";
+import { scanNotes, type AnomalyFlag, type AnomalyMatch } from "./anomaly.js";
+import {
+  loadStore,
+  saveStore,
+  type Episode,
+  type TrayStore,
+  type Triple,
+} from "./store.js";
 import {
   auditNotEffect,
   commitAfterPermit,
@@ -44,28 +54,21 @@ interface Observation {
   source: string;
   title: string;
   headings: string[];
-  lines: number;
   text: string;
-}
-
-interface Episode {
-  id: string;
-  note: string;
-  title: string;
-  headings: string[];
-  lines: number;
-}
-
-interface Triple {
-  s: string;
-  p: string;
-  o: string;
 }
 
 interface WriteItem {
   store: "episodic" | "semantic";
   key: string;
-  value: unknown;
+  value: Episode | Triple[];
+}
+
+export interface Hit {
+  note: string;
+  title: string;
+  score: number;
+  matched: string[];
+  triples: Triple[];
 }
 
 function firstHeading(text: string): string | null {
@@ -83,11 +86,54 @@ function headings(text: string): string[] {
     .filter((h): h is string => h !== undefined);
 }
 
+function firstLine(text: string): string | null {
+  return text.split("\n").find((l) => l.trim() !== "")?.trim() ?? null;
+}
+
+/** Accent-folded (NFKD, marks stripped) so "réunion" matches "reunion". */
+function fold(text: string): string {
+  return text.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
+function tokens(text: string): string[] {
+  return [...new Set(fold(text).split(/[^\p{L}\p{N}]+/u).filter((t) => t.length >= 3))];
+}
+
+/** Question words carry no signal; drop them from queries, not haystacks. */
+const STOPWORDS = new Set([
+  "what", "when", "where", "which", "who", "whom", "why", "how", "did", "does",
+  "do", "the", "and", "for", "with", "about", "was", "were", "are", "you",
+  "your", "have", "has", "had", "this", "that", "note", "notes", "write",
+  "wrote", "written", "say", "said", "last", "week",
+]);
+
+function queryTokens(text: string): string[] {
+  return tokens(text).filter((t) => !STOPWORDS.has(t));
+}
+
+/**
+ * The most frequent body words (folded, stopwords out, capped so a huge
+ * note cannot flood the store). These become "mentions" triples — a bag
+ * of words, deliberately not the prose itself.
+ */
+function bodyKeywords(text: string, cap = 64): string[] {
+  const counts = new Map<string, number>();
+  for (const t of fold(text).split(/[^\p{L}\p{N}]+/u)) {
+    if (t.length < 3 || STOPWORDS.has(t)) continue;
+    counts.set(t, (counts.get(t) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+    .slice(0, cap)
+    .map(([t]) => t);
+}
+
 /**
  * Build the tray appliers. Effects (store.read/write, core.permit) are
  * emitted by appliers through ctx; routing stays the scheduler's alone.
+ * `store` is the local memory the commit node persists into.
  */
-function trayAppliers(kernel: KernelIR, emitter: Emitter): Appliers {
+function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): Appliers {
   const coreStore = { values: [] as string[], goals: [] as string[], style: {} };
 
   const appliers: Appliers = {
@@ -98,9 +144,8 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter): Appliers {
       const obs: Observation[] = raw.map((p) => ({
         id: p.id,
         source: p.id,
-        title: firstHeading(p.text) ?? p.id,
+        title: firstHeading(p.text) ?? firstLine(p.text) ?? p.id,
         headings: headings(p.text),
-        lines: p.text.split("\n").filter((l) => l.trim() !== "").length,
         text: p.text,
       }));
       return { obs };
@@ -112,30 +157,42 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter): Appliers {
         scored: obs.map((o) => ({ obs: o, salience: 1, rationale: "offline stand-in" })),
       };
     },
-    // Offline stand-in: the tray never flags its own inbox as anomalous.
-    "pg-s2w/anomaly": () => ({ flag: null }),
+    // Offline stand-in: deterministic secret scan (src/anomaly.ts). A
+    // non-null flag routes on declared edge e4 so the gate quarantines.
+    "pg-s2w/anomaly": (inputs) => {
+      const obs = inputs.obs as Observation[];
+      return { flag: scanNotes(obs) };
+    },
     "pg-s2w/gate": (inputs) => {
       const scored = inputs.scored as { obs: Observation; salience: number }[];
-      return { selected: scored.slice(0, 8).map((s) => s.obs) };
+      const flag = inputs.flag as AnomalyFlag | undefined;
+      const quarantined = new Set(flag?.notes ?? []);
+      return { selected: scored.filter((s) => !quarantined.has(s.obs.id)).map((s) => s.obs) };
     },
     "pg-s2w/style": () => ({ style: { tone: "plain" } }),
+    // Working memory is a declared budget (slot_schema.maxSlots); what
+    // does not fit is reported on the dropped port, never lost silently.
     "pg-s2w/bind": (inputs) => {
       const selected = inputs.selected as Observation[];
+      const schema = inputs.slot_schema as { maxSlots: number };
       return {
-        slots: selected.map((o) => ({ id: `slot:${o.id}`, obs: o })),
-        dropped: [],
+        slots: selected.slice(0, schema.maxSlots).map((o) => ({ id: `slot:${o.id}`, obs: o })),
+        dropped: selected.slice(schema.maxSlots).map((o) => o.id),
       };
     },
 
     // --- pg-w2l write path: slots → LTM commits -----------------------
     "pg-w2l/episode": (inputs) => {
       const trace = inputs.trace as { slots: { obs: Observation }[] };
-      const episodes: Episode[] = trace.slots.map(({ obs }) => ({
+      // Working episodes carry the note text for semantic extraction;
+      // the persisted Episode never does (conflict rebuilds it from
+      // triples, so only tokens reach the store).
+      const episodes = trace.slots.map(({ obs }) => ({
         id: `ep:${obs.id}`,
         note: obs.id,
         title: obs.title,
         headings: obs.headings,
-        lines: obs.lines,
+        text: obs.text,
       }));
       return { episodes };
     },
@@ -144,12 +201,14 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter): Appliers {
       kept: inputs.episodes as Episode[],
       decision: "keep",
     }),
-    // Offline stand-in: syntactic triples only (title and headings).
+    // Offline stand-in: syntactic triples — title, headings, and a
+    // capped bag of body keywords so ordinary prose is searchable.
     "pg-w2l/semantic": (inputs) => {
-      const kept = inputs.kept as Episode[];
+      const kept = inputs.kept as (Episode & { text?: string })[];
       const triples: Triple[] = kept.flatMap((ep) => [
         { s: ep.note, p: "titled", o: ep.title },
         ...ep.headings.map((h) => ({ s: ep.note, p: "heading", o: h })),
+        ...bodyKeywords(ep.text ?? "").map((o) => ({ s: ep.note, p: "mentions", o })),
       ]);
       return { triples };
     },
@@ -158,33 +217,82 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter): Appliers {
     // FROZEN surface (structural). Steward-held; this stand-in asserts
     // nothing: no structural claims from an offline heuristic.
     "pg-w2l/structural": () => ({ edges: [] }),
+    // The WriteSet is built from conflict's declared inputs only: the
+    // episodic candidates are reconstructed from the triples, so what
+    // commit persists arrived through the graph, not a side channel.
     "pg-w2l/conflict": (inputs) => {
       const triples = inputs.triples as Triple[];
-      const kept = new Map<string, Triple[]>();
-      for (const t of triples) kept.set(t.s, [...(kept.get(t.s) ?? []), t]);
-      return { resolved: { triplesByNote: Object.fromEntries(kept), contradictions: [] } };
+      const byNote = new Map<string, Triple[]>();
+      for (const t of triples) byNote.set(t.s, [...(byNote.get(t.s) ?? []), t]);
+      const items: WriteItem[] = [...byNote.keys()].sort().flatMap((note): WriteItem[] => {
+        const ts = byNote.get(note)!;
+        const episode: Episode = {
+          id: `ep:${note}`,
+          note,
+          title: ts.find((t) => t.p === "titled")?.o ?? note,
+          headings: ts.filter((t) => t.p === "heading").map((t) => t.o),
+        };
+        return [
+          { store: "episodic", key: episode.id, value: episode },
+          { store: "semantic", key: note, value: ts },
+        ];
+      });
+      return { resolved: { items, contradictions: [] } };
     },
     "pg-w2l/align": (inputs) => ({
       verdict: { kind: "pass", clauses: [] },
       write: inputs.resolved,
     }),
     "pg-w2l/commit": (inputs, ctx) => {
-      const write = inputs.write as { triplesByNote: Record<string, Triple[]> };
+      const write = inputs.write as { items: WriteItem[] };
       let written = 0;
-      for (const item of commitItems(write)) {
+      for (const item of write.items) {
         const verdict = requestPermit(item);
         if (verdict !== "pass") continue; // deny already flushed the permit
         ctx.emit({ type: "store.write", store: item.store, keys: [item.key] });
+        if (item.store === "episodic") store.episodic[item.key] = item.value as Episode;
+        else store.semantic[item.key] = item.value as Triple[];
         written += 1;
       }
       return { ack: { rehearse: false, written } };
     },
 
+    // --- pg-w2l read path: question → hits over the local store ------
+    "pg-w2l/query": (inputs) => {
+      const slots = inputs.slots as { text: string }[];
+      return { query: { tokens: queryTokens(slots.map((s) => s.text).join(" ")), indexes: ["episodic", "semantic"] } };
+    },
+    "pg-w2l/hybrid": (inputs, ctx) => {
+      const query = inputs.query as { tokens: string[] };
+      const episodic = inputs.episodic as Episode[];
+      const semantic = inputs.semantic as Triple[];
+      ctx.emit({ type: "store.read", store: "episodic", keys: episodic.map((e) => e.id) });
+      ctx.emit({ type: "store.read", store: "semantic", keys: [...new Set(semantic.map((t) => t.s))] });
+      const hits: Hit[] = episodic
+        .map((ep) => {
+          const ts = semantic.filter((t) => t.s === ep.note);
+          const haystack = tokens(
+            [ep.note, ep.title, ...ep.headings, ...ts.map((t) => t.o)].join(" "),
+          );
+          const matched = query.tokens.filter((q) => haystack.includes(q));
+          return { note: ep.note, title: ep.title, score: matched.length, matched, triples: ts };
+        })
+        .filter((h) => h.score > 0)
+        .sort((a, b) => b.score - a.score || (a.note < b.note ? -1 : 1));
+      return { hits };
+    },
+    // Offline stand-in: hybrid's order is already deterministic; a real
+    // rerank is a Core-constrained prompt.
+    "pg-w2l/rerank": (inputs) => ({ ranked: inputs.hits }),
+    "pg-w2l/inject": (inputs) => ({
+      slots: { need_more: false, items: inputs.ranked },
+    }),
+
     // --- pg-core: one ValueFilter pass per commit item ----------------
     "pg-core/id-read": (inputs, ctx) => {
-      const store = inputs.core_store as typeof coreStore;
+      const cs = inputs.core_store as typeof coreStore;
       ctx.emit({ type: "store.read", store: "values", keys: ["clauses"] });
-      return { snapshot: { values: store.values, goals: store.goals, style: store.style } };
+      return { snapshot: { values: cs.values, goals: cs.goals, style: cs.style } };
     },
     // Offline stand-in: an empty constitution constrains nothing, so the
     // proposal passes. Steward-authored clauses need a real ValueFilter;
@@ -269,14 +377,6 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter): Appliers {
     },
   };
 
-  function commitItems(write: { triplesByNote: Record<string, Triple[]> }): WriteItem[] {
-    const notes = Object.keys(write.triplesByNote).sort();
-    return notes.flatMap((note): WriteItem[] => [
-      { store: "episodic", key: `ep:${note}`, value: { note } },
-      { store: "semantic", key: note, value: write.triplesByNote[note] },
-    ]);
-  }
-
   /**
    * Consult Core for one write item: a full pg-core invocation whose
    * ValueFilter emits core.permit on pass. One run per item — a permit
@@ -299,19 +399,34 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter): Appliers {
   return appliers;
 }
 
+export interface Checks {
+  validTrace: boolean;
+  scheduleNonempty: boolean;
+  commitAfterPermit: boolean;
+  denyImpliesInterrupt: boolean;
+  auditNotEffect: boolean;
+}
+
+function runChecks(kernel: KernelIR, trace: TraceFile): Checks {
+  return {
+    validTrace: validTrace(kernel, trace.events),
+    scheduleNonempty: scheduleNonempty(trace.events),
+    commitAfterPermit: commitAfterPermit(trace.events),
+    denyImpliesInterrupt: denyImpliesInterrupt(trace.events),
+    auditNotEffect: auditNotEffect(trace.events),
+  };
+}
+
 export interface TrayReport {
   notes: string[];
+  quarantined: AnomalyMatch[];
+  deferred: string[];
+  committed: string[];
   episodes: Episode[];
   triples: Triple[];
   auditFlags: number;
   trace: TraceFile;
-  checks: {
-    validTrace: boolean;
-    scheduleNonempty: boolean;
-    commitAfterPermit: boolean;
-    denyImpliesInterrupt: boolean;
-    auditNotEffect: boolean;
-  };
+  checks: Checks;
   permitPairs: { writeIndex: number; store: string; permitIndex: number }[];
   counts: Record<string, number>;
 }
@@ -333,7 +448,12 @@ export function permitPairing(
   return pairs;
 }
 
-export function runTray(inboxDir: string, kernel: KernelIR = loadKernel()): TrayReport {
+export function runTray(
+  inboxDir: string,
+  storeFile: string,
+  kernel: KernelIR = loadKernel(),
+  maxSlots = 64,
+): TrayReport {
   const files = readdirSync(inboxDir)
     .filter((f) => f.endsWith(".md"))
     .sort();
@@ -344,18 +464,21 @@ export function runTray(inboxDir: string, kernel: KernelIR = loadKernel()): Tray
     text: readFileSync(join(inboxDir, f), "utf8"),
   }));
 
+  const store = loadStore(storeFile);
   const emitter = makeEmitter();
-  const appliers = trayAppliers(kernel, emitter);
+  const appliers = trayAppliers(kernel, emitter, store);
   const identity = { values: [], goals: [], style: {} };
 
   const s2w = runGraph(
     kernel,
     "pg-s2w",
-    { raw, identity, slot_schema: { maxSlots: 8 } },
+    { raw, identity, slot_schema: { maxSlots } },
     appliers,
     emitter,
   );
   const slots = s2w.get("bind")?.slots as { obs: Observation }[];
+  const deferred = (s2w.get("bind")?.dropped ?? []) as string[];
+  const flag = s2w.get("anomaly")?.flag as AnomalyFlag | null;
 
   const w2l = runGraph(
     kernel,
@@ -376,42 +499,139 @@ export function runTray(inboxDir: string, kernel: KernelIR = loadKernel()): Tray
   );
   const auditOut = audit.get("report")?.audit as { flags: number } | undefined;
 
+  saveStore(storeFile, store);
+
   const trace = makeTraceFile(kernel.spec, emitter.events);
   return {
     notes: files,
+    quarantined: flag?.matches ?? [],
+    deferred,
+    committed: episodes.map((e) => e.note),
     episodes,
     triples,
     auditFlags: auditOut?.flags ?? 0,
     trace,
-    checks: {
-      validTrace: validTrace(kernel, trace.events),
-      scheduleNonempty: scheduleNonempty(trace.events),
-      commitAfterPermit: commitAfterPermit(trace.events),
-      denyImpliesInterrupt: denyImpliesInterrupt(trace.events),
-      auditNotEffect: auditNotEffect(trace.events),
-    },
+    checks: runChecks(kernel, trace),
     permitPairs: permitPairing(trace.events),
     counts: eventHistogram(trace.events),
   };
 }
 
-export function writeTrace(report: TrayReport, outFile: string): void {
+export interface AskReport {
+  question: string;
+  hits: Hit[];
+  storeNotes: number;
+  trace: TraceFile;
+  checks: Checks;
+}
+
+export function runAsk(
+  question: string,
+  storeFile: string,
+  kernel: KernelIR = loadKernel(),
+): AskReport {
+  const store = loadStore(storeFile);
+  const episodic = Object.keys(store.episodic).sort().map((k) => store.episodic[k]!);
+  const semantic = Object.keys(store.semantic).sort().flatMap((k) => store.semantic[k]!);
+
+  const emitter = makeEmitter();
+  const appliers = trayAppliers(kernel, emitter, store);
+  const out = runGraph(
+    kernel,
+    "pg-w2l",
+    {
+      slots: [{ id: "slot:ask", text: question }],
+      identity: { values: [], goals: [], style: {} },
+      episodic,
+      semantic,
+      skills: [],
+      structural: [],
+    },
+    appliers,
+    emitter,
+  );
+  const injected = out.get("inject")?.slots as { items: Hit[] } | undefined;
+
+  const trace = makeTraceFile(kernel.spec, emitter.events);
+  return {
+    question,
+    hits: injected?.items ?? [],
+    storeNotes: episodic.length,
+    trace,
+    checks: runChecks(kernel, trace),
+  };
+}
+
+export function writeTrace(trace: TraceFile, outFile: string): void {
   mkdirSync(dirname(outFile), { recursive: true });
-  writeFileSync(outFile, JSON.stringify(report.trace, null, 2) + "\n");
+  writeFileSync(outFile, JSON.stringify(trace, null, 2) + "\n");
+}
+
+function checksOk(checks: Checks): boolean {
+  return Object.values(checks).every(Boolean);
 }
 
 function main(): void {
+  // Developers pipe CLI output through head/grep; a closed pipe is not an
+  // error worth a stack trace.
+  process.stdout.on("error", (e: NodeJS.ErrnoException) => {
+    if (e.code === "EPIPE") process.exit(0);
+    throw e;
+  });
   const args = process.argv.slice(2);
   let inbox = join(HELIX_ROOT, "fixtures", "tray");
-  let out = join(HELIX_ROOT, "traces", "tray.json");
+  let out: string | null = null;
+  let storeFile = join(HELIX_ROOT, "store", "tray.json");
+  let ask: string | null = null;
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--inbox" && args[i + 1]) inbox = resolve(args[++i] as string);
-    else if (args[i] === "--out" && args[i + 1]) out = resolve(args[++i] as string);
-    else throw new Error(`unknown argument: ${args[i]}`);
+    const flag = args[i] as string;
+    if (flag === "--inbox" || flag === "--out" || flag === "--store" || flag === "--ask") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`missing value for ${flag}`);
+      if (flag === "--inbox") inbox = resolve(value);
+      else if (flag === "--out") out = resolve(value);
+      else if (flag === "--store") storeFile = resolve(value);
+      else ask = value;
+    } else {
+      throw new Error(`unknown argument: ${flag}`);
+    }
   }
 
-  const report = runTray(inbox);
-  writeTrace(report, out);
+  if (ask !== null) {
+    const report = runAsk(ask, storeFile);
+    const outFile = out ?? join(HELIX_ROOT, "traces", "ask.json");
+    writeTrace(report.trace, outFile);
+    console.log(`ask: "${report.question}" over ${report.storeNotes} remembered notes (${storeFile})`);
+    if (report.storeNotes === 0) {
+      console.log("  no memory yet — drop notes in the inbox and run an ingest first");
+    } else if (report.hits.length === 0) {
+      console.log("  no matches");
+    }
+    for (const h of report.hits.slice(0, 5)) {
+      console.log(`  ${h.note} — "${h.title}" (score ${h.score}; matched ${h.matched.join(", ")})`);
+      for (const t of h.triples.filter((t) => t.p !== "mentions")) {
+        console.log(`      (${t.s}, ${t.p}, ${t.o})`);
+      }
+      const kw = h.triples.filter((t) => t.p === "mentions").length;
+      if (kw > 0) console.log(`      + ${kw} body keywords indexed`);
+    }
+    console.log(`trace: ${outFile} (mneme.trace/v1, ${report.trace.events.length} events; read-only — no store.write, no permit needed)`);
+    console.log(`checks (untrusted TS mirrors, slice-local): ${checksOk(report.checks) ? "PASS" : "FAIL"}`);
+    if (!checksOk(report.checks)) process.exitCode = 1;
+    return;
+  }
+
+  let inboxStat;
+  try {
+    inboxStat = statSync(inbox);
+  } catch {
+    throw new Error(`inbox not found: ${inbox}`);
+  }
+  if (!inboxStat.isDirectory()) throw new Error(`inbox is not a directory: ${inbox}`);
+
+  const report = runTray(inbox, storeFile);
+  const outFile = out ?? join(HELIX_ROOT, "traces", "tray.json");
+  writeTrace(report.trace, outFile);
 
   const ev = report.trace.events;
   const twinInstalls = countType(ev, "twin.install");
@@ -422,12 +642,27 @@ function main(): void {
   const auditWrites = writes.filter((w) => w.type === "store.write" && w.store === "audit.inbox");
 
   console.log(`tray: ${report.notes.length} notes from ${inbox}`);
+  if (report.quarantined.length > 0) {
+    console.log(
+      "quarantined (this version stayed out of memory; a previously committed clean version may still be remembered):",
+    );
+    for (const q of report.quarantined) console.log(`  ! ${q.note}: ${q.rule}`);
+  } else {
+    console.log("secret scan: no rules matched (a clean scan is not a guarantee)");
+  }
+  if (report.deferred.length > 0) {
+    console.log(
+      `deferred (working-memory budget reached — ingest these separately): ${report.deferred.join(", ")}`,
+    );
+  }
+  console.log("committed:");
   for (const ep of report.episodes) {
     const t = report.triples.filter((x) => x.s === ep.note).length;
     console.log(`  - ${ep.note}: "${ep.title}" → ${t} triples`);
   }
+  console.log(`memory: ${storeFile}`);
   console.log(`audit: pg-w2l prompt corpus, ${report.auditFlags} heuristic flags → steward inbox`);
-  console.log(`trace: ${out} (mneme.trace/v1)`);
+  console.log(`trace: ${outFile} (mneme.trace/v1)`);
   console.log(`event count: ${ev.length}`);
   console.log(`event histogram: ${JSON.stringify(report.counts)}`);
   console.log("checks (untrusted TS mirrors of Mneme.Trace; Lean is the artifact, ADR-008):");
@@ -449,7 +684,7 @@ function main(): void {
   );
 
   const ok =
-    Object.values(report.checks).every(Boolean) &&
+    checksOk(report.checks) &&
     twinInstalls === 0 &&
     stewardAcks === 0 &&
     capMints === 0 &&
@@ -461,5 +696,11 @@ function main(): void {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  main();
+  try {
+    main();
+  } catch (err) {
+    // A daily tool reports its errors in one line, not a stack trace.
+    console.error(`tray: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+  }
 }
