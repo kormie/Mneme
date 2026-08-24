@@ -101,22 +101,43 @@ by law. The checks printed are untrusted TypeScript mirrors of the Lean
 predicates in `spec/lean/Trace.lean`; the Lean build remains the
 artifact of record (ADR-008).
 
-## Daily use
+## Daily use: the Monday-afternoon loop
 
-The loop a developer actually keeps: drop notes as they happen, ingest
-at the end of the day, ask questions later.
+The whole loop is two pieces: **listen** (already running, filling the
+L0 buffer — [ADAPTER.md](ADAPTER.md)) plus **one operator command**:
+
+```sh
+bun run dogfood                  # equivalent: bun src/tray.ts --dogfood
+```
+
+One run, no flags: it reads `~/.mneme/buffer.ndjson` if the buffer holds
+packets, else falls back to the documented inbox default `~/mneme-tray`
+(markdown notes you dropped by hand); drains whichever it found through
+the one permit-gated write path (one `core.permit` consumed per
+`store.write`, only the `audit.inbox` report permit-exempt); writes the
+store and a `mneme.trace/v1` to `helix/traces/dogfood.json`; runs the
+untrusted judge over that trace and prints the safety verdict alongside
+the two liveness gaps (`HasClusterCut`, `HasArchiveSample`), which must
+stay **fail** — this slice never runs pg-adl or pg-dem and stuffs no
+events; and finishes with the three feedback prompts below. Exit 0 when
+the drain and the judged safety laws hold; exit 1 on any safety fail.
+When buffer and inbox are both empty it prints "nothing to drain" and
+exits 0 — no write is invented for an uneventful Monday. The hook still
+never commits, and retrieve-on-submit is still absent; nothing becomes
+memory except by this command, run by you.
+
+`--buffer`, `--inbox`, `--store`, and `--out` relocate those defaults
+when you keep your tray elsewhere. The single-source drains remain for
+when you want just one side:
 
 ```sh
 # during the day: standups, PR review notes, CI post-mortems,
 # "follow up with X", git log summaries — one markdown file each
 $EDITOR ~/mneme-tray/$(date +%F)-standup.md
 
-# end of day: ingest (idempotent — rerun any time)
+# ingest one source explicitly (idempotent — rerun any time; packet
+# ids and note names are the memory keys)
 bun run tray --inbox ~/mneme-tray
-
-# also end of day, if the adapter listener has been running: drain the
-# L0 sensory buffer it filled (same write path, same permits, same
-# quarantine; idempotent — packet ids are the memory keys)
 bun run tray --buffer ~/.mneme/buffer.ndjson
 
 # later, from memory:
@@ -153,13 +174,19 @@ refuses the Graft shape outright):
    keys, so re-delivery and re-drains replace instead of duplicating.
    The hook still never commits, and retrieve-on-submit is still absent
    (ADAPTER.md).
+5. ✅ **The Monday-afternoon command** — `bun run dogfood` resolves the
+   source (buffer first, inbox fallback), drains it under consume-once
+   permits, judges the emitted trace with the untrusted judge (safety
+   must pass; the two liveness gaps must stay fail), and prints the
+   three feedback prompts. Empty sources drain nothing and invent no
+   write.
 
 Next, in rank order:
 
-5. **Better retrieval.** Body keywords are indexed now; still open:
+6. **Better retrieval.** Body keywords are indexed now; still open:
    multi-note synthesis, phrase queries, and a date-aware "what happened
    last week" — all deterministic, all within the declared graph.
-6. **Steward-gated proposals only.** Richer structural edges live in the
+7. **Steward-gated proposals only.** Richer structural edges live in the
    frozen `structural` transform, and this whole domain belongs to the
    `agora` twin eventually — both go to Kormie as graph diffs, not code.
 
