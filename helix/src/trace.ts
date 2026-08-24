@@ -115,6 +115,70 @@ export function scheduleNonempty(events: TraceEvent[]): boolean {
   return events.some((e) => e.type === "node.enter");
 }
 
+/**
+ * Mirrors Mneme.Trace.proposeNotInstallB: partition.propose is never
+ * immediately followed by twin.install. Necessary, not sufficient —
+ * twinIdRequiresInstall is the actual close (ADR-009).
+ */
+export function proposeNotInstall(events: TraceEvent[]): boolean {
+  for (let i = 0; i < events.length; i++) {
+    if (
+      events[i]?.type === "partition.propose" &&
+      events[i + 1]?.type === "twin.install"
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Mirrors Mneme.Trace.twinIdRequiresInstallB: store.read/write carrying
+ * a twin id requires a prior twin.install of that id.
+ */
+export function twinIdRequiresInstall(events: TraceEvent[]): boolean {
+  const installed: string[] = [];
+  for (const e of events) {
+    if (e.type === "twin.install") installed.push(e.id);
+    else if (
+      (e.type === "store.read" || e.type === "store.write") &&
+      e.twin !== undefined &&
+      !installed.includes(e.twin)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Mirrors Mneme.Trace.installRequiresAckB: twin.install consumes a prior
+ * steward.ack for the same id. One ack blesses exactly one install; a
+ * replayed ack is a silent install (ADR-014).
+ */
+export function installRequiresAck(events: TraceEvent[]): boolean {
+  const acks: string[] = [];
+  for (const e of events) {
+    if (e.type === "steward.ack") acks.push(e.id);
+    else if (e.type === "twin.install") {
+      const i = acks.indexOf(e.id);
+      if (i === -1) return false;
+      acks.splice(i, 1);
+    }
+  }
+  return true;
+}
+
+/** Mirrors Mneme.Trace.hasClusterCutB: at least one cluster.cut. */
+export function hasClusterCut(events: TraceEvent[]): boolean {
+  return events.some((e) => e.type === "cluster.cut");
+}
+
+/** Mirrors Mneme.Trace.hasArchiveSampleB: at least one archive.sample. */
+export function hasArchiveSample(events: TraceEvent[]): boolean {
+  return events.some((e) => e.type === "archive.sample");
+}
+
 export function countType(events: TraceEvent[], type: TraceEvent["type"]): number {
   return events.filter((e) => e.type === type).length;
 }
