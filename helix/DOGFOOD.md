@@ -7,8 +7,9 @@ a secrets quarantine at the gate, one Core permit per commit, and a
 prompt-corpus audit at the end), remembers them in one local JSON file,
 and writes a `mneme.trace/v1` you can read line by line. `--ask` runs the
 declared read path over that memory, so last week's notes answer this
-week's questions. The behaviour is deterministic: the same inbox and the
-same starting memory produce byte-identical output.
+week's questions. The behaviour is deterministic: the same inbox, the
+same starting memory, and the same Core file produce byte-identical
+output — your constitution is an input to determinism, not a mood.
 
 This is a laptop tool for the operator's own notes. It is not a KOHO
 product feature and touches no KOHO system.
@@ -29,11 +30,27 @@ started, one `core.permit` per commit.
 - **The inbox is files the human dropped.** Nothing is watched, scraped,
   or synced. If you did not put a file in the inbox directory yourself,
   the tray never sees it.
-- **The Core store is empty.** No agent authored constitution clauses on
-  your behalf. An empty constitution constrains nothing, so every commit
-  passes ValueFilter — each one still consumes its own `core.permit`, and
-  the stand-in refuses to run at all against steward-authored clauses it
-  cannot honestly interpret.
+- **The Core is a file you edit.** No agent authored constitution
+  clauses on your behalf: your Core lives at `~/.mneme/core.json`
+  (`--core` relocates it), shaped exactly
+  `{ "values": [], "goals": [], "prose": "" }`, and only you write it —
+  never the listener, never the hook, never a drain. A missing file is
+  an empty Core; a file that is malformed or wrongly shaped aborts the
+  run before any drain, because a constitution must never be silently
+  disabled. An empty constitution constrains nothing, so everything
+  that passed salience still commits, each write under its own
+  `core.permit` — exactly the behaviour before the file existed.
+  `values` is a closed enum of steward-named switches; the first and
+  only one implemented is `human-utterance-only`, which refuses any
+  commit whose declared provenance kind is not `note` or `user-prompt`
+  (defence in depth at Core, on top of the salience gate that already
+  keeps session chrome out of working memory). A denied write is a
+  per-item `core.deny` + `core.interrupt` on the trace — the rest of
+  the drain continues — and a value the stand-in does not implement
+  makes it throw rather than pretend to interpret a clause it cannot
+  honour. `prose` is your own words about those values: the tray never
+  interprets it and it never enters the IdentitySnapshot, so write
+  whatever helps you remember what the switch is for.
 - **Memory is one JSON file you own.** Commits persist to
   `helix/store/tray.json` (or wherever `--store` points): open it, copy
   it, delete it, and the memory is inspected, backed up, or gone.
@@ -110,9 +127,12 @@ L0 buffer — [ADAPTER.md](ADAPTER.md)) plus **one operator command**:
 bun run dogfood                  # equivalent: bun src/tray.ts --dogfood
 ```
 
-One run, no flags: it reads `~/.mneme/buffer.jsonl` if the buffer holds
-packets, else falls back to the documented inbox default `~/mneme-tray`
-(markdown notes you dropped by hand); drains whichever it found through
+One run, no flags: it loads your Core file first (`~/.mneme/core.json`;
+missing means an empty Core, malformed aborts before any drain) and
+prints which constitution applied; reads `~/.mneme/buffer.jsonl` if the
+buffer holds packets, else falls back to the documented inbox default
+`~/mneme-tray` (markdown notes you dropped by hand); drains whichever
+it found through
 the one permit-gated write path (one `core.permit` consumed per
 `store.write`, only the `audit.inbox` report permit-exempt); writes the
 store and a `mneme.trace/v1` to `helix/traces/dogfood.json`; runs the
@@ -135,9 +155,9 @@ triple. The harness's injected `<task-notification>` turns are task
 chrome, not user prompts: the hook never observes them at all
 ([ADAPTER.md](ADAPTER.md)).
 
-`--buffer`, `--inbox`, `--store`, and `--out` relocate those defaults
-when you keep your tray elsewhere. The single-source drains remain for
-when you want just one side:
+`--buffer`, `--inbox`, `--store`, `--out`, and `--core` relocate those
+defaults when you keep your tray (or your constitution) elsewhere. The
+single-source drains remain for when you want just one side:
 
 ```sh
 # during the day: standups, PR review notes, CI post-mortems,
@@ -189,13 +209,22 @@ refuses the Graft shape outright):
    must pass; the two liveness gaps must stay fail), and prints the
    three feedback prompts. Empty sources drain nothing and invent no
    write.
+6. ✅ **The Core file and its first switch** — the drain loads your
+   `~/.mneme/core.json` and runs `human-utterance-only` when you name
+   it: commits whose declared kind is not `note` or `user-prompt` are
+   denied per item (`core.deny` + `core.interrupt` on the trace, the
+   drain continues), episodes and triples now carry that declared
+   `kind`, and entries from before `kind` existed read as unknown —
+   denied under the switch, passed under an empty Core. Safety and
+   liveness claims are unchanged: the same laws hold, the two liveness
+   gaps still must stay fail, and there is still no RuntimeCertificate.
 
 Next, in rank order:
 
-6. **Better retrieval.** Body keywords are indexed now; still open:
+7. **Better retrieval.** Body keywords are indexed now; still open:
    multi-note synthesis, phrase queries, and a date-aware "what happened
    last week" — all deterministic, all within the declared graph.
-7. **Steward-gated proposals only.** Richer structural edges live in the
+8. **Steward-gated proposals only.** Richer structural edges live in the
    frozen `structural` transform, and this whole domain belongs to the
    `agora` twin eventually — both go to Kormie as graph diffs, not code.
 
@@ -215,7 +244,9 @@ Send answers (or a screenshot of your run) to Kormie (@kormie):
 2. **Creepy?** Was there any moment the tray felt like it overstepped —
    read too much, inferred too much, or kept something you did not expect
    it to keep?
-3. **Missing Core clause?** The constitution is empty, so every commit
-   passed. What is the first clause you wished had been there to stop or
-   reshape a write? Phrase it in your own words; the steward, not an
-   agent, decides what enters Core.
+3. **Missing Core clause?** With an empty Core every commit passed;
+   `human-utterance-only` is the first switch you can flip in your own
+   `core.json`. What is the next clause you wished had been there to
+   stop or reshape a write? Phrase it in your own words — the `prose`
+   field is exactly for that phrasing, and it is never executed; the
+   steward, not an agent, decides what becomes a `values` switch.

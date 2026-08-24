@@ -50,12 +50,16 @@ describe("--dogfood over a fixture buffer", () => {
 
   // One real CLI run, shared by the assertions below. execFile rejects on
   // a non-zero exit, so reaching the assertions is itself the exit-0 check.
+  // --core points at a missing file: an absent Core is an empty Core, the
+  // documented default behaviour (and keeps the test hermetic against any
+  // real ~/.mneme/core.json on the machine running it).
   const result = run("bun", [
     TRAY, "--dogfood",
     "--buffer", bufferFile,
     "--inbox", join(dir, "no-inbox"),
     "--store", storeFile,
     "--out", outFile,
+    "--core", join(dir, "no-core.json"),
   ]);
 
   it("drains the packet into the store under its own permit, exit 0", async () => {
@@ -132,6 +136,7 @@ describe("--dogfood over a buffer mixing session-stop and user-prompt", () => {
       "--inbox", join(dir, "no-inbox"),
       "--store", storeFile,
       "--out", outFile,
+      "--core", join(dir, "no-core.json"), // missing Core file = empty Core
     ]);
     expect(stdout).toContain("safety: PASS");
     // The store holds the user prompt, under its own permits, and no
@@ -165,6 +170,7 @@ describe("--dogfood source resolution", () => {
       "--inbox", inbox,
       "--store", storeFile,
       "--out", join(dir, "trace.json"),
+      "--core", join(dir, "no-core.json"),
     ]);
     expect(stdout).toContain("(buffer empty)");
     expect(stdout).toContain("safety: PASS");
@@ -191,6 +197,7 @@ describe("--dogfood source resolution", () => {
       "--inbox", join(dir, "no-inbox"),
       "--store", storeFile,
       "--out", outFile,
+      "--core", join(dir, "no-core.json"),
     ]);
     expect(stdout).toContain("nothing to drain");
     expect(existsSync(storeFile)).toBe(false); // no invented write

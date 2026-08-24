@@ -12,15 +12,26 @@
  * stand-in appliers — no model, no network. Frozen-surface transforms
  * (structural, audit-heuristics, sample-clean) get minimal stand-ins whose
  * real definitions are steward-held; they are marked below and must not be
- * mistaken for canon. The Core store ships empty: the stand-in ValueFilter
- * refuses to interpret steward-authored clauses, so a non-empty
- * constitution needs a real ValueFilter first.
+ * mistaken for canon. The Core is a steward-owned file (src/core.ts,
+ * default ~/.mneme/core.json, `--core` relocates) this CLI loads and
+ * never writes. Its `values` are a closed enum: the stand-in ValueFilter
+ * implements exactly one predicate ("human-utterance-only") and throws on
+ * anything else rather than pretending to interpret a clause it cannot
+ * honour. An empty Core constrains nothing — every commit passes, one
+ * core.permit per store.write, exactly as before a constitution existed.
  */
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { basename, dirname, join, resolve } from "node:path";
 import { defaultBufferFile } from "./buffer-path.js";
+import {
+  coreSnapshot,
+  defaultCoreFile,
+  emptyCore,
+  loadCore,
+  type CoreFile,
+} from "./core.js";
 import { judge, type Judgement } from "./judge.js";
 import { loadKernel, type KernelIR } from "./kernel.js";
 import { makeEmitter, runGraph, type Appliers, type Emitter } from "./scheduler.js";
@@ -103,13 +114,43 @@ function bodyKeywords(text: string, cap = 64): string[] {
     .map(([t]) => t);
 }
 
+/** The one steward-named Core value this slice implements. The closed
+ * enum is exactly this list; the ValueFilter stand-in throws on anything
+ * else (fail closed), and no predicate is added here without Kormie. */
+const IMPLEMENTED_VALUES = ["human-utterance-only"] as const;
+
+/** The provenance kinds "human-utterance-only" admits: things the human
+ * actually typed or dropped, discriminated on the declared kind field
+ * only — never on packet text, never inferred from the channel. */
+const HUMAN_UTTERANCE_KINDS = ["note", "user-prompt"] as const;
+
+/**
+ * The provenance kind a commit proposal declares: the `kind` field on an
+ * episodic Episode, or the `kind` triple on a semantic write. Undefined
+ * means unknown — an entry from before kind was threaded through the
+ * store — which fails closed under a provenance clause and passes under
+ * an empty Core.
+ */
+function proposalKind(p: { store: string; value: Episode | Triple[] }): string | undefined {
+  if (p.store === "episodic") return (p.value as Episode).kind;
+  return (p.value as Triple[]).find((t) => t.p === "kind")?.o;
+}
+
 /**
  * Build the tray appliers. Effects (store.read/write, core.permit) are
  * emitted by appliers through ctx; routing stays the scheduler's alone.
- * `store` is the local memory the commit node persists into.
+ * `store` is the local memory the commit node persists into; `core` is
+ * the loaded steward-owned Core file (read-only here — nothing in the
+ * tray ever writes it, and its prose never leaves it). Exported so the
+ * tests can run a single pg-core invocation against the stand-ins.
  */
-function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): Appliers {
-  const coreStore = { values: [] as string[], goals: [] as string[], style: {} };
+export function trayAppliers(
+  kernel: KernelIR,
+  emitter: Emitter,
+  store: TrayStore,
+  core: CoreFile = emptyCore(),
+): Appliers {
+  const coreStore = coreSnapshot(core);
 
   const appliers: Appliers = {
     // --- pg-s2w: Observation packets → working-memory slots (shared
@@ -128,6 +169,7 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): App
         title: obs.title,
         headings: obs.headings,
         channel: obs.channel,
+        kind: obs.kind,
         text: obs.text,
       }));
       return { episodes };
@@ -144,6 +186,10 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): App
       const triples: Triple[] = kept.flatMap((ep) => [
         { s: ep.note, p: "titled", o: ep.title },
         { s: ep.note, p: "channel", o: ep.channel ?? "file" },
+        // The kind triple mirrors the channel triple, but never defaults:
+        // a missing kind stays missing (unknown), because inventing one
+        // would let a provenance clause pass on made-up provenance.
+        ...(ep.kind === undefined ? [] : [{ s: ep.note, p: "kind", o: ep.kind }]),
         ...ep.headings.map((h) => ({ s: ep.note, p: "heading", o: h })),
         ...bodyKeywords(ep.text ?? "").map((o) => ({ s: ep.note, p: "mentions", o })),
       ]);
@@ -163,12 +209,15 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): App
       for (const t of triples) byNote.set(t.s, [...(byNote.get(t.s) ?? []), t]);
       const items: WriteItem[] = [...byNote.keys()].sort().flatMap((note): WriteItem[] => {
         const ts = byNote.get(note)!;
+        const kind = ts.find((t) => t.p === "kind")?.o;
         const episode: Episode = {
           id: `ep:${note}`,
           note,
           title: ts.find((t) => t.p === "titled")?.o ?? note,
           headings: ts.filter((t) => t.p === "heading").map((t) => t.o),
           channel: ts.find((t) => t.p === "channel")?.o ?? "file",
+          // No kind triple, no kind field: unknown stays unknown.
+          ...(kind === undefined ? {} : { kind }),
         };
         return [
           { store: "episodic", key: episode.id, value: episode },
@@ -232,23 +281,42 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): App
       ctx.emit({ type: "store.read", store: "values", keys: ["clauses"] });
       return { snapshot: { values: cs.values, goals: cs.goals, style: cs.style } };
     },
-    // Offline stand-in: an empty constitution constrains nothing, so the
-    // proposal passes. Steward-authored clauses need a real ValueFilter;
-    // this stand-in refuses to pretend to interpret them.
+    // Offline stand-in over the closed enum of steward-named values.
+    // An empty constitution constrains nothing, so the proposal passes.
+    // "human-utterance-only" refuses any commit whose proposal kind is
+    // not a human utterance — defence in depth at Core, on top of the
+    // salience gate that already keeps session chrome out of slots. Any
+    // value this stand-in does not implement throws (fail closed): it
+    // never pretends to interpret a clause it cannot honour, and it
+    // never reads packet text to decide.
     "pg-core/value-filter": (inputs, ctx) => {
       const snapshot = inputs.snapshot as { values: string[] };
-      if (snapshot.values.length > 0) {
+      const proposal = inputs.proposal as { store: string; value: Episode | Triple[] };
+      const unknown = snapshot.values.filter(
+        (v) => !(IMPLEMENTED_VALUES as readonly string[]).includes(v),
+      );
+      if (unknown.length > 0) {
         throw new Error(
-          "tray value-filter stand-in cannot interpret steward-authored clauses",
+          `tray value-filter stand-in cannot interpret core value(s): ${unknown.join(", ")}`,
         );
       }
+      if (snapshot.values.includes("human-utterance-only")) {
+        const kind = proposalKind(proposal);
+        if (kind === undefined || !(HUMAN_UTTERANCE_KINDS as readonly string[]).includes(kind)) {
+          // Rejected: no permit. The verdict routes on declared edge c5
+          // to InterruptEmit, which emits core.deny + core.interrupt.
+          return { verdict: { kind: "reject", cited_clauses: ["human-utterance-only"] } };
+        }
+      }
       ctx.emit({ type: "core.permit" });
-      return { verdict: { kind: "pass", cited_clauses: [] } };
+      return { verdict: { kind: "pass", cited_clauses: [...snapshot.values] } };
     },
     // Scheduler signal surface (brief §9): deny must be immediately
     // followed by interrupt, so this node emits the pair adjacently.
-    // Reachable only via c5 (reject) or c7 (refused permit); the tray's
-    // pass-only stand-in never routes here, but the wiring is real.
+    // Reached via declared edge c5 when the ValueFilter rejects a
+    // proposal (c7, a refused twin permit, stays unreachable — no twins
+    // in this slice). The interrupt diverts that one pg-core run; the
+    // drain's other items continue, each under its own pg-core pass.
     "pg-core/interrupt": (_inputs, ctx) => {
       ctx.emit({ type: "core.deny" });
       ctx.emit({ type: "core.interrupt" });
@@ -318,7 +386,11 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): App
   /**
    * Consult Core for one write item: a full pg-core invocation whose
    * ValueFilter emits core.permit on pass. One run per item — a permit
-   * authorizes exactly one write (ADR-014), never amortized.
+   * authorizes exactly one write (ADR-014), never amortized. A reject
+   * routes to InterruptEmit inside this same invocation (core.deny +
+   * core.interrupt) and the item is simply not written; the deny is
+   * per item, never a halt of the whole drain. A denied note loses both
+   * its items — episodic and semantic carry the same declared kind.
    */
   function requestPermit(item: WriteItem): string {
     const out = runGraph(
@@ -360,6 +432,9 @@ export interface TrayReport {
   quarantined: AnomalyMatch[];
   deferred: string[];
   committed: string[];
+  /** Notes that reached the write path but whose commits Core refused
+   * (core.deny + core.interrupt, both items, nothing stored). */
+  denied: string[];
   episodes: Episode[];
   triples: Triple[];
   auditFlags: number;
@@ -483,11 +558,12 @@ export function drainPackets(
   storeFile: string,
   kernel: KernelIR = loadKernel(),
   maxSlots = 64,
+  core: CoreFile = emptyCore(),
 ): TrayReport {
   const store = loadStore(storeFile);
   const emitter = makeEmitter();
-  const appliers = trayAppliers(kernel, emitter, store);
-  const identity = { values: [], goals: [], style: {} };
+  const appliers = trayAppliers(kernel, emitter, store, core);
+  const identity = coreSnapshot(core);
 
   const s2w = runGraph(
     kernel,
@@ -507,8 +583,17 @@ export function drainPackets(
     appliers,
     emitter,
   );
-  const episodes = (w2l.get("episode")?.episodes ?? []) as Episode[];
+  const worked = (w2l.get("episode")?.episodes ?? []) as Episode[];
   const triples = (w2l.get("semantic")?.triples ?? []) as Triple[];
+  // What actually persisted is what the trace's episodic writes name;
+  // a note Core denied worked through the graph but was never written.
+  const written = new Set(
+    emitter.events
+      .filter((e) => e.type === "store.write" && e.store === "episodic")
+      .flatMap((e) => (e.type === "store.write" ? e.keys : [])),
+  );
+  const episodes = worked.filter((e) => written.has(e.id));
+  const denied = worked.filter((e) => !written.has(e.id)).map((e) => e.note);
 
   const audit = runGraph(
     kernel,
@@ -527,6 +612,7 @@ export function drainPackets(
     quarantined: flag?.matches ?? [],
     deferred,
     committed: episodes.map((e) => e.note),
+    denied,
     episodes,
     triples,
     auditFlags: auditOut?.flags ?? 0,
@@ -542,8 +628,9 @@ export function runTray(
   storeFile: string,
   kernel: KernelIR = loadKernel(),
   maxSlots = 64,
+  core: CoreFile = emptyCore(),
 ): TrayReport {
-  return drainPackets(readInbox(inboxDir), storeFile, kernel, maxSlots);
+  return drainPackets(readInbox(inboxDir), storeFile, kernel, maxSlots, core);
 }
 
 export interface AskReport {
@@ -558,19 +645,20 @@ export function runAsk(
   question: string,
   storeFile: string,
   kernel: KernelIR = loadKernel(),
+  core: CoreFile = emptyCore(),
 ): AskReport {
   const store = loadStore(storeFile);
   const episodic = Object.keys(store.episodic).sort().map((k) => store.episodic[k]!);
   const semantic = Object.keys(store.semantic).sort().flatMap((k) => store.semantic[k]!);
 
   const emitter = makeEmitter();
-  const appliers = trayAppliers(kernel, emitter, store);
+  const appliers = trayAppliers(kernel, emitter, store, core);
   const out = runGraph(
     kernel,
     "pg-w2l",
     {
       slots: [{ id: "slot:ask", text: question }],
-      identity: { values: [], goals: [], style: {} },
+      identity: coreSnapshot(core),
       episodic,
       semantic,
       skills: [],
@@ -634,6 +722,10 @@ function printDrainDigest(
       `deferred (working-memory budget reached — ingest these separately): ${report.deferred.join(", ")}`,
     );
   }
+  if (report.denied.length > 0) {
+    console.log("denied by Core (constitution refused the commit; nothing stored):");
+    for (const n of report.denied) console.log(`  x ${n}`);
+  }
   console.log("committed:");
   for (const ep of report.episodes) {
     const t = report.triples.filter((x) => x.s === ep.note).length;
@@ -689,8 +781,11 @@ function runDogfood(
   inboxDir: string,
   storeFile: string,
   outFile: string,
+  core: CoreFile,
+  coreLine: string,
 ): number {
   const src = dogfoodSource(bufferFile, inboxDir);
+  console.log(coreLine);
   if (src.kind === "nothing") {
     console.log("dogfood: nothing to drain");
     console.log(`  buffer ${bufferFile}: absent or no packets` +
@@ -701,7 +796,7 @@ function runDogfood(
   }
 
   const kernel = loadKernel();
-  const report = drainPackets(src.packets, storeFile, kernel);
+  const report = drainPackets(src.packets, storeFile, kernel, 64, core);
   writeTrace(report.trace, outFile);
   const sourceLine = src.kind === "buffer"
     ? `dogfood: ${report.notes.length} packet(s) from buffer ${bufferFile}` +
@@ -737,10 +832,17 @@ function runDogfood(
   console.log("     your own notes that a folder listing would not have?");
   console.log("  2. Creepy? Was there any moment the tray felt like it overstepped — read too");
   console.log("     much, inferred too much, or kept something you did not expect it to keep?");
-  console.log("  3. Missing Core clause? The constitution is empty, so every commit passed.");
-  console.log("     What is the first clause you wished had been there to stop or reshape a");
-  console.log("     write? Phrase it in your own words; the steward, not an agent, decides");
-  console.log("     what enters Core.");
+  if (core.values.length === 0) {
+    console.log("  3. Missing Core clause? The constitution is empty, so every commit passed.");
+    console.log("     What is the first clause you wished had been there to stop or reshape a");
+    console.log("     write? Phrase it in your own words; the steward, not an agent, decides");
+    console.log("     what enters Core.");
+  } else {
+    console.log(`  3. Missing Core clause? Your constitution holds: ${core.values.join(", ")}.`);
+    console.log("     What is the next clause you wished had been there to stop or reshape a");
+    console.log("     write? Phrase it in your own words; the steward, not an agent, decides");
+    console.log("     what enters Core.");
+  }
 
   if (!drainOk || !safetyPass || !livenessStillRed) {
     console.error("dogfood: checks FAILED");
@@ -762,6 +864,7 @@ function main(): void {
   let out: string | null = null;
   let storeFile = join(HELIX_ROOT, "store", "tray.json");
   let ask: string | null = null;
+  let coreArg: string | null = null;
   let dogfood = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i] as string;
@@ -769,7 +872,7 @@ function main(): void {
       dogfood = true;
     } else if (
       flag === "--inbox" || flag === "--buffer" || flag === "--out" ||
-      flag === "--store" || flag === "--ask"
+      flag === "--store" || flag === "--ask" || flag === "--core"
     ) {
       const value = args[++i];
       if (value === undefined) throw new Error(`missing value for ${flag}`);
@@ -777,11 +880,22 @@ function main(): void {
       else if (flag === "--buffer") buffer = resolve(value);
       else if (flag === "--out") out = resolve(value);
       else if (flag === "--store") storeFile = resolve(value);
+      else if (flag === "--core") coreArg = resolve(value);
       else ask = value;
     } else {
       throw new Error(`unknown argument: ${flag}`);
     }
   }
+
+  // The steward-owned Core file loads before any drain runs: a malformed
+  // constitution throws right here and nothing is written, rather than
+  // loading as empty and silently constraining nothing (src/core.ts).
+  const corePath = coreArg ?? defaultCoreFile();
+  const core = loadCore(corePath);
+  const coreLine = core.values.length > 0
+    ? `core: ${corePath} (values: ${core.values.join(", ")})`
+    : `core: ${corePath} (empty — no constitution, every salient commit passes)`;
+
   if (dogfood) {
     if (ask !== null) throw new Error("choose one mode per run: --dogfood or --ask");
     // With --dogfood, --buffer and --inbox merely relocate the documented
@@ -791,6 +905,8 @@ function main(): void {
       inbox ?? join(homedir(), "mneme-tray"),
       storeFile,
       out ?? join(HELIX_ROOT, "traces", "dogfood.json"),
+      core,
+      coreLine,
     );
     return;
   }
@@ -799,7 +915,7 @@ function main(): void {
   }
 
   if (ask !== null) {
-    const report = runAsk(ask, storeFile);
+    const report = runAsk(ask, storeFile, loadKernel(), core);
     const outFile = out ?? join(HELIX_ROOT, "traces", "ask.json");
     writeTrace(report.trace, outFile);
     console.log(`ask: "${report.question}" over ${report.storeNotes} remembered notes (${storeFile})`);
@@ -826,7 +942,7 @@ function main(): void {
   let sourceLine: string;
   if (buffer !== null) {
     const { packets, skipped } = readBuffer(buffer);
-    report = drainPackets(packets, storeFile);
+    report = drainPackets(packets, storeFile, loadKernel(), 64, core);
     sourceLine = `tray: ${report.notes.length} packet(s) from buffer ${buffer}` +
       (skipped > 0 ? ` (${skipped} non-packet line(s) skipped)` : "");
   } else {
@@ -838,11 +954,12 @@ function main(): void {
       throw new Error(`inbox not found: ${inboxDir}`);
     }
     if (!inboxStat.isDirectory()) throw new Error(`inbox is not a directory: ${inboxDir}`);
-    report = runTray(inboxDir, storeFile);
+    report = runTray(inboxDir, storeFile, loadKernel(), 64, core);
     sourceLine = `tray: ${report.notes.length} notes from ${inboxDir}`;
   }
   const outFile = out ?? join(HELIX_ROOT, "traces", "tray.json");
   writeTrace(report.trace, outFile);
+  console.log(coreLine);
   if (!printDrainDigest(report, sourceLine, storeFile, outFile)) {
     console.error("tray: checks FAILED");
     process.exitCode = 1;
