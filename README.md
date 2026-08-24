@@ -23,6 +23,13 @@ cd helix && npm ci && npm test        # Helix (Node 22+)
 cd proofs && lake build               # laws + regression suite (Lean 4.33.1 via elan)
 ```
 
+## Dogfood
+
+There is a local-only desk-tray CLI you can point at a folder of your own
+markdown notes; it runs the kernel graphs over them and emits a
+`mneme.trace/v1` you can read. Setup, scope fences, and the three feedback
+prompts live in [helix/DOGFOOD.md](helix/DOGFOOD.md).
+
 ## Map
 
 | Path | What |
