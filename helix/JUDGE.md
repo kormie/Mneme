@@ -129,9 +129,9 @@ demands the real run.
   tactic. `sorryAx` and `Lean.ofReduceBool` (native_decide) fail the
   build. The trace-law theorems in `Regressions.lean` stay at
   `[propext]`.
-- That widened carry is honestly reported, not silently accepted:
-  whether `[propext, Classical.choice, Quot.sound]` is an acceptable
-  axiom set for the static certificate is the steward's call (CLAUDE.md
-  rule 4 — accepting a Certificate is steward-gated), flagged explicitly
-  on the pull request. Until Kormie signs off, `KernelIR.certificate` is
-  a candidate the build keeps honest, not an accepted artifact.
+- Steward accepted `KernelIR.certificate` (static only; axiom footnote
+  as documented) — PR #7. The footnote is a v4.33.1 `String.take` note,
+  not a licence to add `sorry`, `native_decide`, or more axioms: if the
+  set grows, the guard must fail (`#guard_msgs` pins the exact list).
+  Regressions stays at `[propext]`. No RuntimeCertificate is accepted;
+  BLOCKED-RUNTIME on tau is the honest outcome.

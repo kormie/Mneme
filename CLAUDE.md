@@ -71,6 +71,8 @@ Definition of done for the slice (steward-held, in order of strength):
 - **judged** — `judge(kernel)` fail=0. Untrusted. skip is allowed only on
   temporal properties without a trace; skip is not credit.
 - **certified static** — an inhabitant of `Mneme.Certificate`. IR only.
+  Steward accepted `KernelIR.certificate` (static only; axiom footnote
+  as documented in helix/JUDGE.md).
 - **certified runtime** — an inhabitant of `Mneme.RuntimeCertificate`:
   the static certificate plus a real emitted trace satisfying the
   temporal laws. This is the only full claim. The artifact of record is
