@@ -76,20 +76,20 @@ non-zero, that is a regression to report, not a feature.
 
 ## How a KOHO teammate runs it
 
-You need Node 22+ and a clone of this repository. Nothing else.
+You need Bun 1.3+ and a clone of this repository. Nothing else.
 
 ```sh
 cd helix
-npm ci
+bun install
 mkdir -p ~/mneme-tray            # your inbox, anywhere you like
 cp fixtures/tray/*.md ~/mneme-tray   # or drop your own notes in
-npx tsx src/tray.ts --inbox ~/mneme-tray
+bun run tray --inbox ~/mneme-tray
 ```
 
 Running it with no arguments uses the checked-in fixtures:
 
 ```sh
-npx tsx src/tray.ts              # equivalent: npm run tray
+bun run tray                     # equivalent: bun src/tray.ts
 ```
 
 The run prints a per-note digest (and anything quarantined), commits to
@@ -112,16 +112,16 @@ at the end of the day, ask questions later.
 $EDITOR ~/mneme-tray/$(date +%F)-standup.md
 
 # end of day: ingest (idempotent — rerun any time)
-npx tsx src/tray.ts --inbox ~/mneme-tray
+bun run tray --inbox ~/mneme-tray
 
 # also end of day, if the adapter listener has been running: drain the
 # L0 sensory buffer it filled (same write path, same permits, same
 # quarantine; idempotent — packet ids are the memory keys)
-npx tsx src/tray.ts --buffer ~/.mneme/buffer.ndjson
+bun run tray --buffer ~/.mneme/buffer.ndjson
 
 # later, from memory:
-npx tsx src/tray.ts --ask "what did I write about Jordan?"
-npx tsx src/tray.ts --ask "CI flake"
+bun run tray --ask "what did I write about Jordan?"
+bun run tray --ask "CI flake"
 ```
 
 Ask mode runs the declared pg-w2l read path (`query → hybrid → rerank →
