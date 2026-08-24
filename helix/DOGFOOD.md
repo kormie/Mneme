@@ -24,6 +24,15 @@ product feature and touches no KOHO system.
   passes ValueFilter — each one still consumes its own `core.permit`, and
   the stand-in refuses to run at all against steward-authored clauses it
   cannot honestly interpret.
+- **A commit-attempt trace, not a database.** The only thing a run
+  persists is the trace file. The long-term stores and the steward inbox
+  exist as events in that trace, not as files or mailboxes you can open
+  afterwards. The printed checks are slice-local, untrusted TypeScript:
+  the full temporal law set (`Mneme.Trace.Temporal`) also requires ADL
+  and DEM activity (`cluster.cut`, `archive.sample`) that this tray
+  deliberately never produces, and no concrete tray trace has been
+  imported into Lean yet. That import is the roadmap's endgame, not a
+  thing this tool already claims.
 
 ## Forbidden in this dogfood
 
@@ -68,6 +77,35 @@ node or edge that exists in `spec/kernel.json`, every long-term
 untrusted TypeScript mirrors of the Lean predicates in
 `spec/lean/Trace.lean`; the Lean build remains the artifact of record
 (ADR-008).
+
+## Roadmap and known debt
+
+Ranked next slices, all inside the current law (KOHO's stack — git,
+GitHub CI, TypeScript, Go, Python, Terraform, Claude Code — is fertile
+inbox material, but MNEME must stay the operator's own memory, never a
+repo indexer; brief §11 refuses the Graft shape outright):
+
+1. **Anomaly gate for secrets.** `pg-s2w` already declares the `anomaly`
+   node and the `e4` control edge; a deterministic applier that flags
+   credential and card-number patterns would exercise the deny path for
+   real and make every later slice safer. CI logs and Terraform plans are
+   exactly where secrets leak, so this comes first.
+2. **More note flavours.** `git log` day summaries, saved PR reviews, CI
+   failure post-mortems, Claude Code session summaries — dropped as
+   markdown, nothing watched or scraped.
+3. **The read path.** `query → hybrid → rerank → inject` is declared and
+   scheduler-tested; wiring it into the CLI turns a week of committed
+   episodes into answers.
+4. **Steward-gated proposals only.** Richer structural edges live in the
+   frozen `structural` transform, and this whole domain belongs to the
+   `agora` twin eventually — both go to Kormie as graph diffs, not code.
+
+Known Helix debt (acknowledged, not hidden): a cyclic edge re-arms only
+its direct target, so a rerun of `rehearse` would not yet re-run the
+downstream write pipeline; appliers are part of the trusted computing
+base and nothing binds a stand-in's body to the node's `bodyHash` — the
+trace records what this process logged, and only steward review of a
+pinned revision closes that.
 
 ## Feedback we want
 

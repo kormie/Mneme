@@ -101,6 +101,15 @@ Definition of done for the slice (steward-held, in order of strength):
   0.11 fix (steward's call): make it `abbrev AttacksRed`, or prove via
   `by unfold AttacksRed; decide`. When 0.11 lands, re-import Negatives
   and delete the bridge.
+- **SPEC ISSUE #2** — pg-adl guards `a6` (`score < tau`) and `a7`
+  (`score >= tau`) in `spec/kernel.json` reference `tau`, which no IR
+  surface declares: pg-adl's ingress is `ltm`, `fuel` only. A pure
+  scheduler cannot evaluate these guards without inventing a threshold,
+  so Helix fails closed (guard evaluation throws) and pg-adl is not
+  schedulable from the IR alone. Proposed 0.11 fix (steward's call):
+  declare `tau` in pg-adl ingress, or fold it into holdout's
+  configuration — holdout is frozen, so the threshold is steward-held
+  either way.
 - **Toolchain note** — on lean4:v4.33.1, `decide` proofs over these
   predicates depend on `propext` (a core kernel axiom). "Axiom-free"
   in practice means: no `sorryAx`, no `Lean.ofReduceBool`
