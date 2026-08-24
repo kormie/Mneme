@@ -1,0 +1,17 @@
+{
+  "name": "helix",
+  "version": "0.0.1",
+  "private": true,
+  "description": "ADR-013 reference interpreter: pure scheduler over the mneme.spec/0.10 kernel IR, emitting mneme.trace/v1",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

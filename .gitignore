@@ -1,0 +1,6 @@
+node_modules/
+dist/
+proofs/Mneme/
+.lake/
+*.olean
+.DS_Store

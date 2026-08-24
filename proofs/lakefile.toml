@@ -1,0 +1,8 @@
+name = "mneme-proofs"
+defaultTargets = ["Mneme", "Regressions"]
+
+[[lean_lib]]
+name = "Mneme"
+
+[[lean_lib]]
+name = "Regressions"
