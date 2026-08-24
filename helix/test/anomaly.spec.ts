@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { luhnValid, scanNotes } from "../src/anomaly.js";
 
 // Secret-shaped strings are assembled at test time so no credential-like

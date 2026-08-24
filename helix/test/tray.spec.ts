@@ -2,7 +2,7 @@ import { cpSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { loadKernel } from "../src/kernel.js";
 import { permitPairing, runAsk, runTray } from "../src/tray.js";
 import { loadStore } from "../src/store.js";
