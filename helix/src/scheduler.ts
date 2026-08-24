@@ -4,15 +4,31 @@
  * (ADR-011): control flow comes from edge guards evaluated over port
  * values. Node behaviour is supplied by the caller as appliers; the
  * scheduler itself makes no model calls and touches no stores.
+ *
+ * Trust boundary: appliers are part of the trusted computing base. The
+ * scheduler alone emits node.enter/node.exit/edge.fire (appliers that try
+ * are rejected), but appliers can emit any effect event, and nothing here
+ * binds an applier body to the node's bodyHash. A trace therefore attests
+ * what this process logged, not who implemented the nodes; the TypeScript
+ * side is untrusted by design (ADR-008) and only a steward-accepted
+ * revision plus the Lean side can close that gap.
  */
 import type { GraphEdge, GraphNode, KernelIR } from "./kernel.js";
 import type { TraceEvent } from "./trace.js";
 
 export type PortValues = Record<string, unknown>;
 
-/** Emitted store/core events an applier may record while a node runs. */
+/** Scheduling events only the scheduler itself may emit. */
+export type SchedulerOwnedEvent = Extract<
+  TraceEvent,
+  { type: "node.enter" } | { type: "node.exit" } | { type: "edge.fire" }
+>;
+
+/** Store/core/audit effects an applier may record while a node runs. */
+export type EffectEvent = Exclude<TraceEvent, SchedulerOwnedEvent>;
+
 export interface NodeCtx {
-  emit(event: TraceEvent): void;
+  emit(event: EffectEvent): void;
 }
 
 export type Applier = (inputs: PortValues, ctx: NodeCtx) => PortValues;
@@ -100,7 +116,8 @@ interface NodeState {
 
 /**
  * Run one graph invocation. `ingress` binds graph-level inputs by name to
- * in-ports that no edge feeds (INV-PORT-ROUTABLE). A node runs when every
+ * in-ports that no acyclic edge feeds (INV-PORT-ROUTABLE); a port fed only
+ * by a cyclic back-edge takes its first value from ingress. A node runs when every
  * required in-port is bound, at least one in-port is bound (or it has
  * none), and every non-cyclic in-edge is settled (its source ran or can
  * never run). Data edges fire when the produced value is non-null; control
@@ -129,11 +146,14 @@ export function runGraph(
   const inEdges = (n: GraphNode): GraphEdge[] => graph.edges.filter((e) => e.to === n.id);
   const outEdges = (n: GraphNode): GraphEdge[] => graph.edges.filter((e) => e.from === n.id);
 
-  // Ingress binds only ports no edge feeds; edges stay the only wiring.
+  // Ingress binds only ports no acyclic edge feeds; edges stay the only
+  // wiring. A port fed solely by a cyclic back-edge (query.slots,
+  // archive.lineage, sample.ltm) still takes its first value from
+  // ingress — that is what starts the declared loop.
   for (const st of states.values()) {
     for (const p of st.node.ports) {
       if (p.dir !== "in") continue;
-      const fed = inEdges(st.node).some((e) => e.toPort === p.name);
+      const fed = inEdges(st.node).some((e) => e.toPort === p.name && !e.cyclic);
       if (!fed && p.name in ingress) st.bound[p.name] = ingress[p.name];
     }
   }
@@ -217,7 +237,17 @@ export function runGraph(
     const applier = appliers[`${graphId}/${next.id}`];
     if (!applier) throw new Error(`no applier for ${graphId}/${next.id}`);
     emitter.emit({ type: "node.enter", graph: graphId, node: next.id, t: emitter.events.length });
-    const out = applier({ ...st.bound }, { emit: emitter.emit });
+    const ctx: NodeCtx = {
+      // Typed to EffectEvent; the runtime check catches untyped callers.
+      emit: (e) => {
+        const t = (e as TraceEvent).type;
+        if (t === "node.enter" || t === "node.exit" || t === "edge.fire") {
+          throw new Error(`applier for ${graphId}/${next.id} may not emit scheduler-owned event ${t}`);
+        }
+        emitter.emit(e);
+      },
+    };
+    const out = applier({ ...st.bound }, ctx);
     emitter.emit({
       type: "node.exit",
       graph: graphId,

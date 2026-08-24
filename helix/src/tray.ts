@@ -199,6 +199,15 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter): Appliers {
       ctx.emit({ type: "core.permit" });
       return { verdict: { kind: "pass", cited_clauses: [] } };
     },
+    // Scheduler signal surface (brief §9): deny must be immediately
+    // followed by interrupt, so this node emits the pair adjacently.
+    // Reachable only via c5 (reject) or c7 (refused permit); the tray's
+    // pass-only stand-in never routes here, but the wiring is real.
+    "pg-core/interrupt": (_inputs, ctx) => {
+      ctx.emit({ type: "core.deny" });
+      ctx.emit({ type: "core.interrupt" });
+      return { interrupt: { halted: true } };
+    },
 
     // --- pg-audit: lint the pg-w2l prompt corpus, report to steward ---
     "pg-audit/collect": (inputs) => {
@@ -277,7 +286,9 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter): Appliers {
     const out = runGraph(
       kernel,
       "pg-core",
-      { core_store: coreStore, proposal: { store: item.store, key: item.key } },
+      // The full payload rides in the proposal so future steward clauses
+      // can discriminate values, not just store/key labels.
+      { core_store: coreStore, proposal: { store: item.store, key: item.key, value: item.value } },
       appliers,
       emitter,
     );
@@ -433,6 +444,9 @@ function main(): void {
   console.log(`  steward.ack events: ${stewardAcks} (${stewardAcks === 0 ? "absent" : "VIOLATION"})`);
   console.log(`  cap.mint events: ${capMints} (${capMints === 0 ? "absent" : "VIOLATION"})`);
   console.log(`  twin.action events: ${twinActions} (${twinActions === 0 ? "absent" : "VIOLATION"})`);
+  console.log(
+    "not claimed: full Mneme.Trace.Temporal also needs cluster.cut and archive.sample (ADL/DEM, out of this slice); this report is slice-local and the trace is not yet imported into Lean",
+  );
 
   const ok =
     Object.values(report.checks).every(Boolean) &&

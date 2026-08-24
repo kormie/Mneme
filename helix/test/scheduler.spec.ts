@@ -77,4 +77,72 @@ describe("runGraph on pg-core", () => {
       runGraph(kernel, "pg-core", { core_store: {}, proposal: {} }, {}, makeEmitter()),
     ).toThrow(/no applier/);
   });
+
+  it("routes reject verdicts to interrupt with deny immediately before interrupt", () => {
+    const denyAppliers: Appliers = {
+      "pg-core/id-read": () => ({ snapshot: { values: [] } }),
+      "pg-core/value-filter": () => ({ verdict: { kind: "reject", cited_clauses: [] } }),
+      "pg-core/interrupt": (_inputs, ctx) => {
+        ctx.emit({ type: "core.deny" });
+        ctx.emit({ type: "core.interrupt" });
+        return { interrupt: { halted: true } };
+      },
+    };
+    const emitter = makeEmitter();
+    runGraph(kernel, "pg-core", { core_store: {}, proposal: {} }, denyAppliers, emitter);
+    const types = emitter.events.map((e) => (e.type === "edge.fire" ? `fire:${e.edge}` : e.type));
+    expect(types).toContain("fire:c5"); // reject edge fires, pass edge does not
+    expect(types).not.toContain("fire:c6");
+    const deny = emitter.events.findIndex((e) => e.type === "core.deny");
+    expect(deny).toBeGreaterThanOrEqual(0);
+    // G (core.deny → X core.interrupt): the very next event is interrupt.
+    expect(emitter.events[deny + 1]?.type).toBe("core.interrupt");
+  });
+
+  it("refuses applier-forged scheduler events", () => {
+    const forging: Appliers = {
+      "pg-core/id-read": (_inputs, ctx) => {
+        ctx.emit({ type: "node.enter", graph: "pg-core", node: "id-read", t: 0 } as never);
+        return { snapshot: {} };
+      },
+    };
+    expect(() =>
+      runGraph(kernel, "pg-core", { core_store: {} }, forging, makeEmitter()),
+    ).toThrow(/scheduler-owned/);
+  });
+});
+
+describe("cyclically-fed ingress ports (pg-w2l read path)", () => {
+  it("seeds query.slots from ingress and terminates when need_more is false", () => {
+    const appliers: Appliers = {
+      "pg-w2l/query": (inputs) => ({ query: { from: inputs.slots, indexes: ["episodic"] } }),
+      "pg-w2l/hybrid": (inputs) => ({
+        hits: (inputs.episodic as unknown[]).map((e) => ({ hit: e })),
+      }),
+      "pg-w2l/rerank": (inputs) => ({ ranked: inputs.hits }),
+      "pg-w2l/inject": (inputs) => ({
+        slots: { need_more: false, items: inputs.ranked },
+      }),
+    };
+    const emitter = makeEmitter();
+    const out = runGraph(
+      kernel,
+      "pg-w2l",
+      {
+        slots: [{ id: "slot:q" }],
+        identity: { values: [] },
+        episodic: [{ id: "ep:1" }],
+        semantic: [],
+        skills: [],
+        structural: [],
+      },
+      appliers,
+      emitter,
+    );
+    const entered = emitter.events.flatMap((e) => (e.type === "node.enter" ? [e.node] : []));
+    expect(entered).toEqual(["query", "hybrid", "rerank", "inject"]);
+    expect(out.get("inject")?.slots).toEqual({ need_more: false, items: [{ hit: { id: "ep:1" } }] });
+    // w12 is guard-false, so the cycle does not refire and no fuel is spent.
+    expect(emitter.events.filter((e) => e.type === "edge.fire" && e.edge === "w12")).toHaveLength(0);
+  });
 });
