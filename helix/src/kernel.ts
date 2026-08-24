@@ -52,16 +52,22 @@ export interface GraphArtifactMeta {
   hash: string;
 }
 
+export interface IngressBinding {
+  name: string;
+  type: string;
+}
+
 export interface Graph {
   id: string;
   code: string;
   purpose: string;
-  state: unknown;
-  runtime: unknown;
+  state: string;
+  runtime: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
-  ingress: unknown;
-  fuel: unknown;
+  ingress: IngressBinding[];
+  /** Cyclic edge id → maximum fires per run (INV-PORT-ROUTABLE). */
+  fuel: Record<string, number>;
   artifact: GraphArtifactMeta;
 }
 
