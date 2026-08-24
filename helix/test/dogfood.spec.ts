@@ -108,6 +108,49 @@ describe("--dogfood over a fixture buffer", () => {
   });
 });
 
+describe("--dogfood over a buffer mixing session-stop and user-prompt", () => {
+  it("commits only the user-prompt; session-stop stays an observation", async () => {
+    const dir = tmp("mixed");
+    const prompt = fixturePacket();
+    const stop = JSON.parse(
+      readFileSync(
+        join(HELIX_ROOT, "fixtures", "adapters", "claude-code-session-stop.json"),
+        "utf8",
+      ),
+    ) as Observation;
+    expect(isObservation(stop)).toBe(true);
+    const bufferFile = join(dir, "buffer.jsonl");
+    writeFileSync(
+      bufferFile,
+      JSON.stringify(stop) + "\n" + JSON.stringify(prompt) + "\n",
+    );
+    const storeFile = join(dir, "store.json");
+    const outFile = join(dir, "trace.json");
+    const { stdout } = await run("bun", [
+      TRAY, "--dogfood",
+      "--buffer", bufferFile,
+      "--inbox", join(dir, "no-inbox"),
+      "--store", storeFile,
+      "--out", outFile,
+    ]);
+    expect(stdout).toContain("safety: PASS");
+    // The store holds the user prompt, under its own permits, and no
+    // trace of the session-stop id in any store.write key.
+    const store = loadStore(storeFile);
+    expect(Object.keys(store.episodic)).toEqual([`ep:${prompt.id}`]);
+    expect(Object.keys(store.semantic)).toEqual([prompt.id]);
+    const trace = JSON.parse(readFileSync(outFile, "utf8")) as TraceFile;
+    for (const e of trace.events) {
+      if (e.type === "store.write") {
+        expect(e.keys.join(), "session-stop id leaked into a write key").not.toContain(stop.id);
+      }
+    }
+    const pairs = permitPairing(trace.events);
+    expect(pairs).toHaveLength(2); // episodic + semantic for the one prompt
+    for (const p of pairs) expect(p.permitIndex).toBeGreaterThanOrEqual(0);
+  });
+});
+
 describe("--dogfood source resolution", () => {
   it("falls back to the inbox when the buffer is absent, exit 0", async () => {
     const dir = tmp("inbox");

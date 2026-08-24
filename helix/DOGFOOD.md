@@ -126,6 +126,15 @@ exits 0 — no write is invented for an uneventful Monday. The hook still
 never commits, and retrieve-on-submit is still absent; nothing becomes
 memory except by this command, run by you.
 
+What the drain commits is what you observed, never the session's own
+chrome. A Claude Code `session-stop` packet is sensory punctuation: the
+listener may buffer it (observe), but the salience stand-in scores it 0
+and the gate honours the score, so it never binds into working memory
+and its id never appears in a `store.write` key, an episode, or a
+triple. The harness's injected `<task-notification>` turns are task
+chrome, not user prompts: the hook never observes them at all
+([ADAPTER.md](ADAPTER.md)).
+
 `--buffer`, `--inbox`, `--store`, and `--out` relocate those defaults
 when you keep your tray elsewhere. The single-source drains remain for
 when you want just one side:

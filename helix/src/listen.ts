@@ -92,7 +92,9 @@ export function drainSpool(spoolDir: string): Observation[] {
 }
 
 export interface BatchReport {
-  /** Packet ids appended to the sensory buffer (clean, in slot or deferred). */
+  /** Packet ids appended to the sensory buffer: everything clean, whether
+   * it bound into a slot, deferred over budget, or — like session
+   * punctuation below the gate's threshold — was observed only. */
   accepted: string[];
   quarantined: AnomalyMatch[];
   deferred: string[];

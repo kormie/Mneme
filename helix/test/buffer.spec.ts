@@ -137,6 +137,35 @@ describe("the L0 sensory buffer drains into tray LTM", () => {
     expect(Object.keys(store.semantic)).toEqual([clean.id]);
   });
 
+  it("keeps session-stop ids out of the store.write keys and the store", () => {
+    // Stop is sensory punctuation: the listener may buffer it (observe),
+    // but a drain must never commit it as long-term memory.
+    const prompt = fixturePacket();
+    const stop = JSON.parse(
+      readFileSync(join(FIXTURES, "claude-code-session-stop.json"), "utf8"),
+    ) as Observation;
+    expect(isObservation(stop)).toBe(true);
+    const bufferFile = join(tmp("stop"), "buffer.jsonl");
+    writeFileSync(
+      bufferFile,
+      JSON.stringify(stop) + "\n" + JSON.stringify(prompt) + "\n",
+    );
+    const storeFile = join(tmp("stop-store"), "tray.json");
+    const report = drainPackets(readBuffer(bufferFile).packets, storeFile, kernel);
+
+    expect(report.committed).toEqual([prompt.id]);
+    expect(report.quarantined).toEqual([]);
+    for (const e of report.trace.events) {
+      if (e.type === "store.write") {
+        expect(e.keys.join(), "session-stop id leaked into a write key").not.toContain(stop.id);
+      }
+    }
+    const store = loadStore(storeFile);
+    expect(Object.keys(store.episodic)).toEqual([`ep:${prompt.id}`]);
+    expect(Object.keys(store.semantic)).toEqual([prompt.id]);
+    expect(Object.values(report.checks).every(Boolean)).toBe(true);
+  });
+
   it("answers a phrase from the drained packet via --ask, without writing", () => {
     const packet = fixturePacket();
     const storeFile = join(tmp("ask-store"), "tray.json");
