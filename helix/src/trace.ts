@@ -37,15 +37,18 @@ export function makeTraceFile(spec: string, events: TraceEvent[]): TraceFile {
   return { trace: "mneme.trace/v1", spec, events };
 }
 
-/** Mirrors Mneme.Trace.validTraceB: every node/edge the log names exists. */
+/** Mirrors Mneme.Trace.validTraceB: every node/edge the log names exists.
+ *  Node lookup goes through the FIRST graph with a matching id, exactly as
+ *  Lean's `Kernel.findNode` (`List.find?`) does — on a kernel with
+ *  duplicated graph ids the two diverge otherwise. */
 export function validTrace(k: KernelIR, events: TraceEvent[]): boolean {
   return events.every((e) => {
     switch (e.type) {
       case "node.enter":
-      case "node.exit":
-        return k.graphs.some(
-          (g) => g.id === e.graph && g.nodes.some((n) => n.id === e.node),
-        );
+      case "node.exit": {
+        const g = k.graphs.find((x) => x.id === e.graph);
+        return g !== undefined && g.nodes.some((n) => n.id === e.node);
+      }
       case "edge.fire":
         return k.graphs.some((g) => g.edges.some((ed) => ed.id === e.edge));
       default:
@@ -113,6 +116,70 @@ export function auditNotEffect(events: TraceEvent[]): boolean {
 /** Mirrors Mneme.Trace.scheduleNonemptyB. */
 export function scheduleNonempty(events: TraceEvent[]): boolean {
   return events.some((e) => e.type === "node.enter");
+}
+
+/**
+ * Mirrors Mneme.Trace.proposeNotInstallB: partition.propose is never
+ * immediately followed by twin.install. Necessary, not sufficient —
+ * twinIdRequiresInstall is the actual close (ADR-009).
+ */
+export function proposeNotInstall(events: TraceEvent[]): boolean {
+  for (let i = 0; i < events.length; i++) {
+    if (
+      events[i]?.type === "partition.propose" &&
+      events[i + 1]?.type === "twin.install"
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Mirrors Mneme.Trace.twinIdRequiresInstallB: store.read/write carrying
+ * a twin id requires a prior twin.install of that id.
+ */
+export function twinIdRequiresInstall(events: TraceEvent[]): boolean {
+  const installed: string[] = [];
+  for (const e of events) {
+    if (e.type === "twin.install") installed.push(e.id);
+    else if (
+      (e.type === "store.read" || e.type === "store.write") &&
+      e.twin !== undefined &&
+      !installed.includes(e.twin)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Mirrors Mneme.Trace.installRequiresAckB: twin.install consumes a prior
+ * steward.ack for the same id. One ack blesses exactly one install; a
+ * replayed ack is a silent install (ADR-014).
+ */
+export function installRequiresAck(events: TraceEvent[]): boolean {
+  const acks: string[] = [];
+  for (const e of events) {
+    if (e.type === "steward.ack") acks.push(e.id);
+    else if (e.type === "twin.install") {
+      const i = acks.indexOf(e.id);
+      if (i === -1) return false;
+      acks.splice(i, 1);
+    }
+  }
+  return true;
+}
+
+/** Mirrors Mneme.Trace.hasClusterCutB: at least one cluster.cut. */
+export function hasClusterCut(events: TraceEvent[]): boolean {
+  return events.some((e) => e.type === "cluster.cut");
+}
+
+/** Mirrors Mneme.Trace.hasArchiveSampleB: at least one archive.sample. */
+export function hasArchiveSample(events: TraceEvent[]): boolean {
+  return events.some((e) => e.type === "archive.sample");
 }
 
 export function countType(events: TraceEvent[], type: TraceEvent["type"]): number {

@@ -26,8 +26,9 @@ The steward is Kormie (@kormie). Agents implement; the human steers.
 ./scripts/verify-spec.sh              # spec integrity (run before and after work)
 cd helix && bun install && bun test   # Helix tests
 cd helix && bun run typecheck         # strict tsc
+bun helix/src/judge.ts                # untrusted judge over spec/inhabitants.md (see helix/JUDGE.md)
 ./scripts/sync-lean.sh                # refresh generated Lean sources
-cd proofs && lake build               # check all laws + Regressions (elan/Lean 4.33.1)
+cd proofs && lake build               # check all laws + Regressions + KernelIR certificate (elan/Lean 4.33.1)
 ```
 
 CI runs exactly these. A session is not done until all of them pass.
@@ -70,6 +71,8 @@ Definition of done for the slice (steward-held, in order of strength):
 - **judged** — `judge(kernel)` fail=0. Untrusted. skip is allowed only on
   temporal properties without a trace; skip is not credit.
 - **certified static** — an inhabitant of `Mneme.Certificate`. IR only.
+  Steward accepted `KernelIR.certificate` (static only; axiom footnote
+  as documented in helix/JUDGE.md).
 - **certified runtime** — an inhabitant of `Mneme.RuntimeCertificate`:
   the static certificate plus a real emitted trace satisfying the
   temporal laws. This is the only full claim. The artifact of record is
@@ -115,7 +118,14 @@ Definition of done for the slice (steward-held, in order of strength):
   predicates depend on `propext` (a core kernel axiom). "Axiom-free"
   in practice means: no `sorryAx`, no `Lean.ofReduceBool`
   (native_decide), no `Classical.choice`. The guard in
-  `Regressions.lean` encodes exactly that.
+  `Regressions.lean` encodes exactly that. One nuance: any theorem
+  whose statement mentions `WellFormed` additionally carries
+  `Classical.choice` and `Quot.sound` through the toolchain's
+  `String.Slice` machinery referenced by `versioned` (v4.33.1
+  `String.take`) — from the String library's definitions, not from the
+  tactic. The guard in `proofs/KernelIR.lean` therefore admits exactly
+  `[propext, Classical.choice, Quot.sound]` while still refusing
+  `sorryAx` and `Lean.ofReduceBool`.
 
 ## Importing a new pack (steward-initiated only)
 
