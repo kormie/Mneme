@@ -14,6 +14,7 @@
  */
 import {
   appendFileSync,
+  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -157,12 +158,22 @@ interface ListenOptions {
   once: boolean;
 }
 
+
+/** Default L0 buffer path. JSON Lines (one Observation per line). If the
+ *  operator already has ~/.mneme/buffer.ndjson and has not started a
+ *  jsonl file, keep writing there so a rename does not split the log. */
+export function defaultBufferFile(base: string): string {
+  const jsonl = join(base, "buffer.jsonl");
+  const ndjson = join(base, "buffer.ndjson");
+  return !existsSync(jsonl) && existsSync(ndjson) ? ndjson : jsonl;
+}
+
 function defaults(): ListenOptions {
   const base = join(homedir(), ".mneme");
   return {
     sockPath: join(base, "helix.sock"),
     spoolDir: join(base, "spool"),
-    bufferFile: join(base, "buffer.ndjson"),
+    bufferFile: defaultBufferFile(base),
     traceFile: join(HELIX_ROOT, "traces", "listen.json"),
     maxSlots: 64,
     once: false,

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "bun:test";
 import { loadKernel } from "../src/kernel.js";
-import { drainSpool, listenChecks, processBatch, senseBatch } from "../src/listen.js";
+import { defaultBufferFile, drainSpool, listenChecks, processBatch, senseBatch } from "../src/listen.js";
 import { isObservation, parseObservation, type Observation } from "../src/observation.js";
 import { makeEmitter } from "../src/scheduler.js";
 import { countType } from "../src/trace.js";
@@ -33,7 +33,7 @@ function fixturePacket(): Observation {
 describe("a synthetic claude-code packet through the sensory loop", () => {
   const packet = fixturePacket();
   const emitter = makeEmitter();
-  const bufferFile = join(tmp("buffer"), "buffer.ndjson");
+  const bufferFile = join(tmp("buffer"), "buffer.jsonl");
   const batch = processBatch(kernel, [packet], emitter, bufferFile);
   const events = emitter.events;
 
@@ -76,7 +76,7 @@ describe("a synthetic claude-code packet through the sensory loop", () => {
 describe("the quarantine holds on the claude-code channel", () => {
   it("drops a packet with a credential assignment, buffering nothing", () => {
     const emitter = makeEmitter();
-    const bufferFile = join(tmp("quarantine"), "buffer.ndjson");
+    const bufferFile = join(tmp("quarantine"), "buffer.jsonl");
     const bad: Observation = {
       id: "cc-fixture-bad",
       t: 1756000000001,
@@ -205,5 +205,16 @@ describe("a batch mixing channels", () => {
     const { slots, flag } = senseBatch(kernel, packets, emitter);
     expect(flag).toBeNull();
     expect(slots.map((s) => s.obs.channel).sort()).toEqual(["claude-code", "file"]);
+  });
+});
+
+describe("the default buffer path", () => {
+  it("prefers buffer.jsonl and falls back to buffer.ndjson only when that is the existing file", () => {
+    const dir = tmp("buf-ext");
+    expect(defaultBufferFile(dir)).toBe(join(dir, "buffer.jsonl"));
+    writeFileSync(join(dir, "buffer.ndjson"), "\n");
+    expect(defaultBufferFile(dir)).toBe(join(dir, "buffer.ndjson"));
+    writeFileSync(join(dir, "buffer.jsonl"), "\n");
+    expect(defaultBufferFile(dir)).toBe(join(dir, "buffer.jsonl"));
   });
 });

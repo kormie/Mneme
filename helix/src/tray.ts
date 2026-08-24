@@ -2,7 +2,7 @@
  * Desk-tray dogfood (ADR-013 slice). A local-only CLI with two ingest
  * sources and one write path: the operator drops markdown notes into an
  * inbox directory (`--inbox`), or drains the L0 sensory buffer the
- * adapter listener fills (`--buffer`, ndjson of Observation packets).
+ * adapter listener fills (`--buffer`, jsonl of Observation packets).
  * Either way the scheduler runs the declared kernel graphs, commits
  * episodes and triples to a small local JSON store — one core.permit per
  * store.write — and emits a mneme.trace/v1 file. `--ask` runs the
@@ -16,7 +16,7 @@
  * refuses to interpret steward-authored clauses, so a non-empty
  * constitution needs a real ValueFilter first.
  */
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { basename, dirname, join, resolve } from "node:path";
@@ -599,6 +599,15 @@ function checksOk(checks: Checks): boolean {
   return Object.values(checks).every(Boolean);
 }
 
+/** Same rule as listen.defaultBufferFile (kept here: listen imports tray). */
+function dogfoodBufferPath(): string {
+  const base = join(homedir(), ".mneme");
+  const jsonl = join(base, "buffer.jsonl");
+  const ndjson = join(base, "buffer.ndjson");
+  return !existsSync(jsonl) && existsSync(ndjson) ? ndjson : jsonl;
+}
+
+
 /**
  * Print the drain digest shared by every write mode (--inbox, --buffer,
  * --dogfood): what was quarantined, deferred, and committed, then the
@@ -786,7 +795,7 @@ function main(): void {
     // With --dogfood, --buffer and --inbox merely relocate the documented
     // defaults; source preference (buffer first) stays the same.
     process.exitCode = runDogfood(
-      buffer ?? join(homedir(), ".mneme", "buffer.ndjson"),
+      buffer ?? dogfoodBufferPath(),
       inbox ?? join(homedir(), "mneme-tray"),
       storeFile,
       out ?? join(HELIX_ROOT, "traces", "dogfood.json"),

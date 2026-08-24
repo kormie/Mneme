@@ -110,7 +110,7 @@ L0 buffer — [ADAPTER.md](ADAPTER.md)) plus **one operator command**:
 bun run dogfood                  # equivalent: bun src/tray.ts --dogfood
 ```
 
-One run, no flags: it reads `~/.mneme/buffer.ndjson` if the buffer holds
+One run, no flags: it reads `~/.mneme/buffer.jsonl` if the buffer holds
 packets, else falls back to the documented inbox default `~/mneme-tray`
 (markdown notes you dropped by hand); drains whichever it found through
 the one permit-gated write path (one `core.permit` consumed per
@@ -138,7 +138,7 @@ $EDITOR ~/mneme-tray/$(date +%F)-standup.md
 # ingest one source explicitly (idempotent — rerun any time; packet
 # ids and note names are the memory keys)
 bun run tray --inbox ~/mneme-tray
-bun run tray --buffer ~/.mneme/buffer.ndjson
+bun run tray --buffer ~/.mneme/buffer.jsonl
 
 # later, from memory:
 bun run tray --ask "what did I write about Jordan?"
