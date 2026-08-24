@@ -1,0 +1,2690 @@
+{
+  "spec": "mneme.spec/0.10",
+  "layers": [
+    {
+      "id": "sensory",
+      "idx": "L0",
+      "name": "Sensory Layer",
+      "stores": [
+        "adapters",
+        "buffer",
+        "tools"
+      ],
+      "graphIds": [
+        "pg-s2w",
+        "pg-twin"
+      ]
+    },
+    {
+      "id": "working",
+      "idx": "L1",
+      "name": "Short-Term (Working) Memory",
+      "stores": [
+        "slots",
+        "scratch",
+        "task"
+      ],
+      "graphIds": [
+        "pg-s2w",
+        "pg-w2l",
+        "pg-core",
+        "pg-twin"
+      ]
+    },
+    {
+      "id": "longterm",
+      "idx": "L2",
+      "name": "Long-Term Memory",
+      "stores": [
+        "episodic",
+        "semantic",
+        "skills",
+        "structural",
+        "decisions",
+        "lineage"
+      ],
+      "graphIds": [
+        "pg-w2l",
+        "pg-dem",
+        "pg-adl",
+        "pg-core",
+        "pg-audit"
+      ]
+    },
+    {
+      "id": "core",
+      "idx": "L3",
+      "name": "Core Identity",
+      "stores": [
+        "values",
+        "goals",
+        "style",
+        "caps",
+        "self"
+      ],
+      "graphIds": [
+        "pg-core",
+        "pg-s2w",
+        "pg-w2l",
+        "pg-twin",
+        "pg-dem",
+        "pg-adl",
+        "pg-audit"
+      ]
+    }
+  ],
+  "graphs": [
+    {
+      "id": "pg-s2w",
+      "code": "PG-S2W",
+      "purpose": "Turn volatile high-bandwidth perception into bounded working-memory slots, under Core attention and anomaly interrupts.",
+      "state": "MemoryState.sensory, .wm, .core_snapshot",
+      "runtime": "Adapters parallel; AnomalyFlag may emit Interrupt; AttentionGate is a deterministic budget. No cycles required; Core parameters are data edges, not hidden system prompts.",
+      "nodes": [
+        {
+          "id": "sensor-normalize",
+          "label": "SensorNormalize",
+          "kind": "transform",
+          "role": "Coerce raw streams into typed Observation packets.",
+          "ports": [
+            {
+              "name": "raw",
+              "type": "RawPacket[]",
+              "dir": "in"
+            },
+            {
+              "name": "obs",
+              "type": "Observation[]",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:f6e57108",
+          "promptRef": null
+        },
+        {
+          "id": "salience",
+          "label": "SalienceScore",
+          "kind": "prompt",
+          "role": "Score each observation against current goals and Core snapshot.",
+          "ports": [
+            {
+              "name": "obs",
+              "type": "Observation[]",
+              "dir": "in"
+            },
+            {
+              "name": "identity",
+              "type": "IdentitySnapshot",
+              "dir": "in"
+            },
+            {
+              "name": "scored",
+              "type": "ScoredObs[]",
+              "dir": "out"
+            }
+          ],
+          "signature": "observation, identity, goals -> salience: float, rationale: str",
+          "bodyHash": "fnv1a:e2bee169",
+          "promptRef": "prompts/pg-s2w/salience.md"
+        },
+        {
+          "id": "anomaly",
+          "label": "AnomalyFlag",
+          "kind": "prompt",
+          "role": "Detect observations that contradict the self-model or safety clauses.",
+          "ports": [
+            {
+              "name": "obs",
+              "type": "Observation[]",
+              "dir": "in"
+            },
+            {
+              "name": "identity",
+              "type": "IdentitySnapshot",
+              "dir": "in"
+            },
+            {
+              "name": "flag",
+              "type": "AnomalyEvent?",
+              "dir": "out"
+            }
+          ],
+          "signature": "observation, self_model -> anomaly: bool, clause: str",
+          "bodyHash": "fnv1a:44e66937",
+          "promptRef": "prompts/pg-s2w/anomaly.md"
+        },
+        {
+          "id": "gate",
+          "label": "AttentionGate",
+          "kind": "transform",
+          "role": "Apply budget k and threshold τ. Deterministic.",
+          "ports": [
+            {
+              "name": "scored",
+              "type": "ScoredObs[]",
+              "dir": "in"
+            },
+            {
+              "name": "flag",
+              "type": "AnomalyEvent?",
+              "dir": "in"
+            },
+            {
+              "name": "selected",
+              "type": "Observation[]",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:2cac4394",
+          "promptRef": null
+        },
+        {
+          "id": "style",
+          "label": "StyleInject",
+          "kind": "transform",
+          "role": "Bind Core cognitive style into the bind-node's parameter bag.",
+          "ports": [
+            {
+              "name": "identity",
+              "type": "IdentitySnapshot",
+              "dir": "in"
+            },
+            {
+              "name": "style",
+              "type": "StyleParams",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:7a5bb68f",
+          "promptRef": null
+        },
+        {
+          "id": "bind",
+          "label": "WorkingSlotBind",
+          "kind": "prompt",
+          "role": "Compress selected observations into bounded working-memory slots.",
+          "ports": [
+            {
+              "name": "selected",
+              "type": "Observation[]",
+              "dir": "in"
+            },
+            {
+              "name": "style",
+              "type": "StyleParams",
+              "dir": "in"
+            },
+            {
+              "name": "slot_schema",
+              "type": "SlotSchema",
+              "dir": "in"
+            },
+            {
+              "name": "slots",
+              "type": "Slot[]",
+              "dir": "out"
+            },
+            {
+              "name": "dropped",
+              "type": "Id[]",
+              "dir": "out"
+            }
+          ],
+          "signature": "observations, style, slot_schema -> slots: Slot[], dropped: id[]",
+          "bodyHash": "fnv1a:df4cc803",
+          "promptRef": "prompts/pg-s2w/bind.md"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "from": "sensor-normalize",
+          "to": "salience",
+          "fromPort": "obs",
+          "toPort": "obs",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "e2",
+          "from": "sensor-normalize",
+          "to": "anomaly",
+          "fromPort": "obs",
+          "toPort": "obs",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "e3",
+          "from": "salience",
+          "to": "gate",
+          "fromPort": "scored",
+          "toPort": "scored",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "e4",
+          "from": "anomaly",
+          "to": "gate",
+          "fromPort": "flag",
+          "toPort": "flag",
+          "kind": "control",
+          "cyclic": false,
+          "guard": "flag != null",
+          "xor": null
+        },
+        {
+          "id": "e5",
+          "from": "gate",
+          "to": "bind",
+          "fromPort": "selected",
+          "toPort": "selected",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "e6",
+          "from": "style",
+          "to": "bind",
+          "fromPort": "style",
+          "toPort": "style",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        }
+      ],
+      "ingress": [
+        {
+          "name": "raw",
+          "type": "RawPacket[]"
+        },
+        {
+          "name": "identity",
+          "type": "IdentitySnapshot"
+        },
+        {
+          "name": "slot_schema",
+          "type": "SlotSchema"
+        }
+      ],
+      "fuel": {},
+      "artifact": {
+        "version": "mneme.graph/pg-s2w@1.0",
+        "inspect": "Serialize nodes, edges, ports, signatures.",
+        "versioning": "Git-like graph diff. Prompt files referenced, not inlined.",
+        "validation": "Port typecheck + budget invariants on AttentionGate.",
+        "optimization": "MIPRO on SalienceScore, AnomalyFlag, WorkingSlotBind.",
+        "hash": "fnv1a:177fc443"
+      }
+    },
+    {
+      "id": "pg-w2l",
+      "code": "PG-W2L",
+      "purpose": "Bidirectional memory: write path consolidates traces into episodes, semantics, skills, and an LLM-free structural graph; read path hybrid-retrieves under Core.",
+      "state": "MemoryState.wm, .ltm, .core_snapshot, .checkpoint",
+      "runtime": "Two cycles: rehearsal and RAG. Write fans out SemanticExtract ∥ SkillDistill ∥ StructuralIndex. HybridRetrieve fans out four ways. CoreAlignment is a hard control gate on every commit.",
+      "nodes": [
+        {
+          "id": "episode",
+          "label": "EpisodeSegment",
+          "kind": "transform",
+          "role": "Chunk the working trace at task boundaries.",
+          "ports": [
+            {
+              "name": "trace",
+              "type": "Trace",
+              "dir": "in"
+            },
+            {
+              "name": "episodes",
+              "type": "Episode[]",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:04f4ac59",
+          "promptRef": null
+        },
+        {
+          "id": "rehearse",
+          "label": "RehearseGate",
+          "kind": "prompt",
+          "role": "Decide keep / compress / drop. May cycle after commit.",
+          "ports": [
+            {
+              "name": "episodes",
+              "type": "Episode[]",
+              "dir": "in"
+            },
+            {
+              "name": "identity",
+              "type": "IdentitySnapshot",
+              "dir": "in"
+            },
+            {
+              "name": "resume",
+              "type": "CommitAck?",
+              "dir": "in"
+            },
+            {
+              "name": "kept",
+              "type": "Episode[]",
+              "dir": "out"
+            },
+            {
+              "name": "decision",
+              "type": "KeepDrop",
+              "dir": "out"
+            }
+          ],
+          "signature": "episode, salience_history, identity -> decision: keep|compress|drop",
+          "bodyHash": "fnv1a:28421206",
+          "promptRef": "prompts/pg-w2l/rehearse.md"
+        },
+        {
+          "id": "semantic",
+          "label": "SemanticExtract",
+          "kind": "prompt",
+          "role": "Lift facts and relations from kept episodes.",
+          "ports": [
+            {
+              "name": "kept",
+              "type": "Episode[]",
+              "dir": "in"
+            },
+            {
+              "name": "triples",
+              "type": "Triple[]",
+              "dir": "out"
+            }
+          ],
+          "signature": "episode -> triples: Triple[], confidence: float",
+          "bodyHash": "fnv1a:59b54780",
+          "promptRef": "prompts/pg-w2l/semantic.md"
+        },
+        {
+          "id": "skill",
+          "label": "SkillDistill",
+          "kind": "prompt",
+          "role": "If the episode is procedural, emit a callable skill subgraph.",
+          "ports": [
+            {
+              "name": "kept",
+              "type": "Episode[]",
+              "dir": "in"
+            },
+            {
+              "name": "skill",
+              "type": "SkillGraph?",
+              "dir": "out"
+            }
+          ],
+          "signature": "episode -> skill_graph?: GraphArtifact",
+          "bodyHash": "fnv1a:e3e90ace",
+          "promptRef": "prompts/pg-w2l/skill.md"
+        },
+        {
+          "id": "structural",
+          "label": "StructuralIndex",
+          "kind": "transform",
+          "role": "Deterministic typed-relation extract, corroborated by traces. Never a model.",
+          "ports": [
+            {
+              "name": "kept",
+              "type": "Episode[]",
+              "dir": "in"
+            },
+            {
+              "name": "traces",
+              "type": "Trace[]",
+              "dir": "in"
+            },
+            {
+              "name": "edges",
+              "type": "StructEdge[]",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:7ee47399",
+          "promptRef": null
+        },
+        {
+          "id": "conflict",
+          "label": "ConflictResolve",
+          "kind": "prompt",
+          "role": "Reconcile candidate writes with existing LTM, including structural edges.",
+          "ports": [
+            {
+              "name": "triples",
+              "type": "Triple[]",
+              "dir": "in"
+            },
+            {
+              "name": "skill",
+              "type": "SkillGraph?",
+              "dir": "in"
+            },
+            {
+              "name": "edges",
+              "type": "StructEdge[]",
+              "dir": "in"
+            },
+            {
+              "name": "resolved",
+              "type": "WriteSet",
+              "dir": "out"
+            }
+          ],
+          "signature": "candidate, existing, structural -> write_set, contradictions",
+          "bodyHash": "fnv1a:4b056fcc",
+          "promptRef": "prompts/pg-w2l/conflict.md"
+        },
+        {
+          "id": "align",
+          "label": "CoreAlignment",
+          "kind": "prompt",
+          "role": "Mandatory Core gate. Reject / redact / pass.",
+          "ports": [
+            {
+              "name": "resolved",
+              "type": "WriteSet",
+              "dir": "in"
+            },
+            {
+              "name": "identity",
+              "type": "IdentitySnapshot",
+              "dir": "in"
+            },
+            {
+              "name": "verdict",
+              "type": "AlignVerdict",
+              "dir": "out"
+            },
+            {
+              "name": "write",
+              "type": "WriteSet",
+              "dir": "out"
+            }
+          ],
+          "signature": "write_set, constitution -> verdict: pass|redact|reject, clauses[]",
+          "bodyHash": "fnv1a:9372ee9d",
+          "promptRef": "prompts/pg-w2l/align.md"
+        },
+        {
+          "id": "commit",
+          "label": "CommitWrite",
+          "kind": "transform",
+          "role": "Transactional persist. Checkpoint the graph artifact.",
+          "ports": [
+            {
+              "name": "verdict",
+              "type": "AlignVerdict",
+              "dir": "in"
+            },
+            {
+              "name": "write",
+              "type": "WriteSet",
+              "dir": "in"
+            },
+            {
+              "name": "ack",
+              "type": "CommitAck",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:34145c40",
+          "promptRef": null
+        },
+        {
+          "id": "query",
+          "label": "QueryForm",
+          "kind": "prompt",
+          "role": "Turn a working-memory need into a retrieve query.",
+          "ports": [
+            {
+              "name": "slots",
+              "type": "Slot[]",
+              "dir": "in"
+            },
+            {
+              "name": "query",
+              "type": "RetrieveQuery",
+              "dir": "out"
+            }
+          ],
+          "signature": "slots, goal -> query, indexes[]",
+          "bodyHash": "fnv1a:a677b81b",
+          "promptRef": "prompts/pg-w2l/query.md"
+        },
+        {
+          "id": "hybrid",
+          "label": "HybridRetrieve",
+          "kind": "transform",
+          "role": "Fan-out episodic ∥ semantic ∥ skill ∥ structural. Parallel. Structural is LLM-free.",
+          "ports": [
+            {
+              "name": "query",
+              "type": "RetrieveQuery",
+              "dir": "in"
+            },
+            {
+              "name": "episodic",
+              "type": "Episode[]",
+              "dir": "in"
+            },
+            {
+              "name": "semantic",
+              "type": "Triple[]",
+              "dir": "in"
+            },
+            {
+              "name": "skills",
+              "type": "SkillGraph[]",
+              "dir": "in"
+            },
+            {
+              "name": "structural",
+              "type": "StructEdge[]",
+              "dir": "in"
+            },
+            {
+              "name": "hits",
+              "type": "Hit[]",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:b2bf17dd",
+          "promptRef": null
+        },
+        {
+          "id": "rerank",
+          "label": "RelevanceRerank",
+          "kind": "prompt",
+          "role": "Core-constrained rerank before inject.",
+          "ports": [
+            {
+              "name": "hits",
+              "type": "Hit[]",
+              "dir": "in"
+            },
+            {
+              "name": "identity",
+              "type": "IdentitySnapshot",
+              "dir": "in"
+            },
+            {
+              "name": "ranked",
+              "type": "Hit[]",
+              "dir": "out"
+            }
+          ],
+          "signature": "hits, slots, identity -> ranked: Hit[]",
+          "bodyHash": "fnv1a:dcd3f2cf",
+          "promptRef": "prompts/pg-w2l/rerank.md"
+        },
+        {
+          "id": "inject",
+          "label": "WorkingInject",
+          "kind": "transform",
+          "role": "Bind hits into WM slots. May cycle back to QueryForm.",
+          "ports": [
+            {
+              "name": "ranked",
+              "type": "Hit[]",
+              "dir": "in"
+            },
+            {
+              "name": "slots",
+              "type": "Slot[]",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:67901bb3",
+          "promptRef": null
+        }
+      ],
+      "edges": [
+        {
+          "id": "w1",
+          "from": "episode",
+          "to": "rehearse",
+          "fromPort": "episodes",
+          "toPort": "episodes",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "w2",
+          "from": "rehearse",
+          "to": "semantic",
+          "fromPort": "kept",
+          "toPort": "kept",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "w3",
+          "from": "rehearse",
+          "to": "skill",
+          "fromPort": "kept",
+          "toPort": "kept",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "w3b",
+          "from": "rehearse",
+          "to": "structural",
+          "fromPort": "kept",
+          "toPort": "kept",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "w4",
+          "from": "semantic",
+          "to": "conflict",
+          "fromPort": "triples",
+          "toPort": "triples",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "w5",
+          "from": "skill",
+          "to": "conflict",
+          "fromPort": "skill",
+          "toPort": "skill",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "w5b",
+          "from": "structural",
+          "to": "conflict",
+          "fromPort": "edges",
+          "toPort": "edges",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "w6",
+          "from": "conflict",
+          "to": "align",
+          "fromPort": "resolved",
+          "toPort": "resolved",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "w7",
+          "from": "align",
+          "to": "commit",
+          "fromPort": "verdict",
+          "toPort": "verdict",
+          "kind": "control",
+          "cyclic": false,
+          "guard": "verdict.kind == pass",
+          "xor": null
+        },
+        {
+          "id": "w7b",
+          "from": "align",
+          "to": "commit",
+          "fromPort": "write",
+          "toPort": "write",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "w8",
+          "from": "commit",
+          "to": "rehearse",
+          "fromPort": "ack",
+          "toPort": "resume",
+          "kind": "control",
+          "cyclic": true,
+          "guard": "ack.rehearse == true",
+          "xor": null
+        },
+        {
+          "id": "w9",
+          "from": "query",
+          "to": "hybrid",
+          "fromPort": "query",
+          "toPort": "query",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "w10",
+          "from": "hybrid",
+          "to": "rerank",
+          "fromPort": "hits",
+          "toPort": "hits",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "w11",
+          "from": "rerank",
+          "to": "inject",
+          "fromPort": "ranked",
+          "toPort": "ranked",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "w12",
+          "from": "inject",
+          "to": "query",
+          "fromPort": "slots",
+          "toPort": "slots",
+          "kind": "control",
+          "cyclic": true,
+          "guard": "slots.need_more == true",
+          "xor": null
+        }
+      ],
+      "ingress": [
+        {
+          "name": "trace",
+          "type": "Trace"
+        },
+        {
+          "name": "traces",
+          "type": "Trace[]"
+        },
+        {
+          "name": "identity",
+          "type": "IdentitySnapshot"
+        },
+        {
+          "name": "slots",
+          "type": "Slot[]"
+        },
+        {
+          "name": "episodic",
+          "type": "Episode[]"
+        },
+        {
+          "name": "semantic",
+          "type": "Triple[]"
+        },
+        {
+          "name": "skills",
+          "type": "SkillGraph[]"
+        },
+        {
+          "name": "structural",
+          "type": "StructEdge[]"
+        }
+      ],
+      "fuel": {
+        "w8": 4,
+        "w12": 4
+      },
+      "artifact": {
+        "version": "mneme.graph/pg-w2l@1.0",
+        "inspect": "Dual-path graph with cycle markers, three-way write fan-out, four-way retrieve.",
+        "versioning": "Skill subgraphs version independently of extract prompts.",
+        "validation": "No commit without CoreAlignment pass; typecheck WriteSet.",
+        "optimization": "MIPRO extract/rerank; AFlow on whether rehearsal cycle is present.",
+        "hash": "fnv1a:c051e777"
+      }
+    },
+    {
+      "id": "pg-core",
+      "code": "PG-CORE",
+      "purpose": "Make identity an executable subgraph. Continuous downward constraint; rare, gated upward self-model update. Twins cannot write Core.",
+      "state": "MemoryState.core, .proposal, .interrupt_bus",
+      "runtime": "Invoked as a subgraph from every other graph. InterruptEmit is a real scheduler signal. SelfModelUpdate requires ValueFilter pass and evidence.",
+      "nodes": [
+        {
+          "id": "id-read",
+          "label": "IdentityRead",
+          "kind": "transform",
+          "role": "Fetch the frozen IdentitySnapshot for this step.",
+          "ports": [
+            {
+              "name": "core_store",
+              "type": "CoreStore",
+              "dir": "in"
+            },
+            {
+              "name": "snapshot",
+              "type": "IdentitySnapshot",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:8106e15a",
+          "promptRef": null
+        },
+        {
+          "id": "value-filter",
+          "label": "ValueFilter",
+          "kind": "prompt",
+          "role": "Check proposed action or write against constitutional clauses.",
+          "ports": [
+            {
+              "name": "snapshot",
+              "type": "IdentitySnapshot",
+              "dir": "in"
+            },
+            {
+              "name": "proposal",
+              "type": "Proposal",
+              "dir": "in"
+            },
+            {
+              "name": "verdict",
+              "type": "AlignVerdict",
+              "dir": "out"
+            }
+          ],
+          "signature": "proposal, clauses -> verdict, cited_clauses[]",
+          "bodyHash": "fnv1a:eef49eda",
+          "promptRef": "prompts/pg-core/value-filter.md"
+        },
+        {
+          "id": "goal",
+          "label": "GoalReconcile",
+          "kind": "prompt",
+          "role": "Reconcile task goals with the long-horizon stack.",
+          "ports": [
+            {
+              "name": "snapshot",
+              "type": "IdentitySnapshot",
+              "dir": "in"
+            },
+            {
+              "name": "task_goal",
+              "type": "Goal",
+              "dir": "in"
+            },
+            {
+              "name": "binding",
+              "type": "GoalBinding",
+              "dir": "out"
+            }
+          ],
+          "signature": "task_goal, long_horizon -> binding, tension?",
+          "bodyHash": "fnv1a:d7d55dba",
+          "promptRef": "prompts/pg-core/goal.md"
+        },
+        {
+          "id": "twin-auth",
+          "label": "TwinAuthorize",
+          "kind": "transform",
+          "role": "Permit iff token.subject, scope, and verb cover the action. Not a paragraph.",
+          "ports": [
+            {
+              "name": "snapshot",
+              "type": "IdentitySnapshot",
+              "dir": "in"
+            },
+            {
+              "name": "twin_act",
+              "type": "TwinAction",
+              "dir": "in"
+            },
+            {
+              "name": "cap",
+              "type": "CapToken",
+              "dir": "in"
+            },
+            {
+              "name": "permit",
+              "type": "Permit",
+              "dir": "out"
+            }
+          ],
+          "signature": "twin_id, action, capabilities, clauses -> permit: bool, reason",
+          "bodyHash": "fnv1a:9046f2b1",
+          "promptRef": null
+        },
+        {
+          "id": "self-upd",
+          "label": "SelfModelUpdate",
+          "kind": "prompt",
+          "role": "Rare, high-threshold revision of the self-model.",
+          "ports": [
+            {
+              "name": "snapshot",
+              "type": "IdentitySnapshot",
+              "dir": "in"
+            },
+            {
+              "name": "delta",
+              "type": "SelfModelDelta",
+              "dir": "in"
+            },
+            {
+              "name": "evidence",
+              "type": "Evidence",
+              "dir": "in"
+            },
+            {
+              "name": "approval",
+              "type": "StewardAck",
+              "dir": "in"
+            },
+            {
+              "name": "go",
+              "type": "AlignVerdict",
+              "dir": "in"
+            },
+            {
+              "name": "next",
+              "type": "IdentitySnapshot",
+              "dir": "out"
+            },
+            {
+              "name": "accept",
+              "type": "Accept",
+              "dir": "out"
+            }
+          ],
+          "signature": "delta, snapshot, evidence -> accept: bool, next_snapshot",
+          "bodyHash": "fnv1a:4730a7d0",
+          "promptRef": "prompts/pg-core/self-upd.md"
+        },
+        {
+          "id": "interrupt",
+          "label": "InterruptEmit",
+          "kind": "transform",
+          "role": "Halt or divert the Helix scheduler.",
+          "ports": [
+            {
+              "name": "verdict",
+              "type": "AlignVerdict?",
+              "dir": "in"
+            },
+            {
+              "name": "permit",
+              "type": "Permit?",
+              "dir": "in"
+            },
+            {
+              "name": "interrupt",
+              "type": "Interrupt",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:25b2ae6e",
+          "promptRef": null
+        },
+        {
+          "id": "core-write",
+          "label": "CoreWrite",
+          "kind": "transform",
+          "role": "The only durable write to CoreStore. Requires accept and steward ack already on SelfModelUpdate.",
+          "ports": [
+            {
+              "name": "next",
+              "type": "IdentitySnapshot",
+              "dir": "in"
+            },
+            {
+              "name": "accept",
+              "type": "Accept",
+              "dir": "in"
+            },
+            {
+              "name": "core_store",
+              "type": "CoreStore",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:72f6302e",
+          "promptRef": null
+        }
+      ],
+      "edges": [
+        {
+          "id": "c1",
+          "from": "id-read",
+          "to": "value-filter",
+          "fromPort": "snapshot",
+          "toPort": "snapshot",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "c2",
+          "from": "id-read",
+          "to": "goal",
+          "fromPort": "snapshot",
+          "toPort": "snapshot",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "c3",
+          "from": "id-read",
+          "to": "twin-auth",
+          "fromPort": "snapshot",
+          "toPort": "snapshot",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "c4",
+          "from": "id-read",
+          "to": "self-upd",
+          "fromPort": "snapshot",
+          "toPort": "snapshot",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "c5",
+          "from": "value-filter",
+          "to": "interrupt",
+          "fromPort": "verdict",
+          "toPort": "verdict",
+          "kind": "control",
+          "cyclic": false,
+          "guard": "verdict.kind == reject",
+          "xor": null
+        },
+        {
+          "id": "c6",
+          "from": "value-filter",
+          "to": "self-upd",
+          "fromPort": "verdict",
+          "toPort": "go",
+          "kind": "control",
+          "cyclic": false,
+          "guard": "verdict.kind == pass",
+          "xor": null
+        },
+        {
+          "id": "c7",
+          "from": "twin-auth",
+          "to": "interrupt",
+          "fromPort": "permit",
+          "toPort": "permit",
+          "kind": "control",
+          "cyclic": false,
+          "guard": "permit.allowed == false",
+          "xor": null
+        },
+        {
+          "id": "c9",
+          "from": "self-upd",
+          "to": "core-write",
+          "fromPort": "next",
+          "toPort": "next",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "c10",
+          "from": "self-upd",
+          "to": "core-write",
+          "fromPort": "accept",
+          "toPort": "accept",
+          "kind": "control",
+          "cyclic": false,
+          "guard": "accept == true",
+          "xor": null
+        }
+      ],
+      "ingress": [
+        {
+          "name": "core_store",
+          "type": "CoreStore"
+        },
+        {
+          "name": "proposal",
+          "type": "Proposal"
+        },
+        {
+          "name": "task_goal",
+          "type": "Goal"
+        },
+        {
+          "name": "twin_act",
+          "type": "TwinAction"
+        },
+        {
+          "name": "cap",
+          "type": "CapToken"
+        },
+        {
+          "name": "delta",
+          "type": "SelfModelDelta"
+        },
+        {
+          "name": "evidence",
+          "type": "Evidence"
+        },
+        {
+          "name": "approval",
+          "type": "StewardAck"
+        }
+      ],
+      "fuel": {},
+      "artifact": {
+        "version": "mneme.graph/pg-core@1.0",
+        "inspect": "Constraint topology + referenced constitution files.",
+        "versioning": "Clauses in their own files; graph YAML references them.",
+        "validation": "Every inbound proposal port must land on ValueFilter.",
+        "optimization": "Compile ValueFilter and TwinAuthorize; freeze clauses.",
+        "hash": "fnv1a:e8e382c7"
+      }
+    },
+    {
+      "id": "pg-dem",
+      "code": "PG-DEM",
+      "purpose": "Grow competence by Darwinian search over graph artifacts: sample a parent from lineage, mutate, sandbox-eval, archive all functional variants, promote only those that pass T1–T4 and Core. Core is not in the archive.",
+      "state": "MemoryState.ltm.skills, .ltm.lineage, .core_snapshot, .dem_scratch",
+      "runtime": "Two cycles: repair (Validate → GraphAuthor) and Darwinian (RegisterDomain → ArchiveSample). ArchiveSample is score × inverse children. Frozen surfaces: Core, T1–T4 Validate, archive, StructuralIndex. No domain is live until both gates pass; losers still remain parents.",
+      "nodes": [
+        {
+          "id": "gap",
+          "label": "GapDetect",
+          "kind": "prompt",
+          "role": "Find competence holes relative to Core goals and twin demand.",
+          "ports": [
+            {
+              "name": "ltm",
+              "type": "SkillIndex",
+              "dir": "in"
+            },
+            {
+              "name": "goals",
+              "type": "Goal[]",
+              "dir": "in"
+            },
+            {
+              "name": "gaps",
+              "type": "Gap[]",
+              "dir": "out"
+            }
+          ],
+          "signature": "skill_index, goals, failures -> gaps[]",
+          "bodyHash": "fnv1a:6d6b027d",
+          "promptRef": "prompts/pg-dem/gap.md"
+        },
+        {
+          "id": "archive",
+          "label": "ArchiveSample",
+          "kind": "transform",
+          "role": "Sample a parent variant: score × inverse child-count. Keep the losers.",
+          "ports": [
+            {
+              "name": "gaps",
+              "type": "Gap[]",
+              "dir": "in"
+            },
+            {
+              "name": "lineage",
+              "type": "LineageArchive",
+              "dir": "in"
+            },
+            {
+              "name": "parent",
+              "type": "GraphArtifact",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:1eb8db73",
+          "promptRef": null
+        },
+        {
+          "id": "propose",
+          "label": "DomainPropose",
+          "kind": "prompt",
+          "role": "Propose a domain schema: types, ports, invariants.",
+          "ports": [
+            {
+              "name": "gaps",
+              "type": "Gap[]",
+              "dir": "in"
+            },
+            {
+              "name": "parent",
+              "type": "GraphArtifact",
+              "dir": "in"
+            },
+            {
+              "name": "schema",
+              "type": "DomainSchema",
+              "dir": "out"
+            }
+          ],
+          "signature": "gap, parent -> schema, risks[]",
+          "bodyHash": "fnv1a:69a71ba2",
+          "promptRef": "prompts/pg-dem/propose.md"
+        },
+        {
+          "id": "author",
+          "label": "GraphAuthor",
+          "kind": "prompt",
+          "role": "Emit an explicit node/edge list — a candidate prompt graph, mutated from a parent.",
+          "ports": [
+            {
+              "name": "schema",
+              "type": "DomainSchema",
+              "dir": "in"
+            },
+            {
+              "name": "parent",
+              "type": "GraphArtifact",
+              "dir": "in"
+            },
+            {
+              "name": "report",
+              "type": "InclusionReport?",
+              "dir": "in"
+            },
+            {
+              "name": "fuel",
+              "type": "Fuel",
+              "dir": "in"
+            },
+            {
+              "name": "graph",
+              "type": "GraphArtifact",
+              "dir": "out"
+            }
+          ],
+          "signature": "schema, parent, node_vocab -> graph_artifact",
+          "bodyHash": "fnv1a:d6fe03d3",
+          "promptRef": "prompts/pg-dem/author.md"
+        },
+        {
+          "id": "validate",
+          "label": "T1–T4 Validate",
+          "kind": "transform",
+          "role": "Frozen inclusion test. Sandboxed. Hidden from GraphAuthor.",
+          "ports": [
+            {
+              "name": "graph",
+              "type": "GraphArtifact",
+              "dir": "in"
+            },
+            {
+              "name": "report",
+              "type": "InclusionReport",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:b9bbecd1",
+          "promptRef": null
+        },
+        {
+          "id": "dem-align",
+          "label": "CoreAlign",
+          "kind": "prompt",
+          "role": "Reject domains that violate Core (e.g. covert surveillance).",
+          "ports": [
+            {
+              "name": "graph",
+              "type": "GraphArtifact",
+              "dir": "in"
+            },
+            {
+              "name": "identity",
+              "type": "IdentitySnapshot",
+              "dir": "in"
+            },
+            {
+              "name": "verdict",
+              "type": "AlignVerdict",
+              "dir": "out"
+            }
+          ],
+          "signature": "graph_artifact, clauses -> verdict",
+          "bodyHash": "fnv1a:95d66595",
+          "promptRef": "prompts/pg-dem/dem-align.md"
+        },
+        {
+          "id": "register",
+          "label": "RegisterDomain",
+          "kind": "transform",
+          "role": "Archive every functional variant; promote only those that pass T1–T4 and Core.",
+          "ports": [
+            {
+              "name": "graph",
+              "type": "GraphArtifact",
+              "dir": "in"
+            },
+            {
+              "name": "verdict",
+              "type": "AlignVerdict",
+              "dir": "in"
+            },
+            {
+              "name": "report",
+              "type": "InclusionReport",
+              "dir": "in"
+            },
+            {
+              "name": "ack",
+              "type": "DomainAck",
+              "dir": "out"
+            },
+            {
+              "name": "lineage",
+              "type": "LineageArchive",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:1508ce24",
+          "promptRef": null
+        }
+      ],
+      "edges": [
+        {
+          "id": "d0",
+          "from": "gap",
+          "to": "archive",
+          "fromPort": "gaps",
+          "toPort": "gaps",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "d0b",
+          "from": "gap",
+          "to": "propose",
+          "fromPort": "gaps",
+          "toPort": "gaps",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "d1",
+          "from": "archive",
+          "to": "propose",
+          "fromPort": "parent",
+          "toPort": "parent",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "d1b",
+          "from": "archive",
+          "to": "author",
+          "fromPort": "parent",
+          "toPort": "parent",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "d2",
+          "from": "propose",
+          "to": "author",
+          "fromPort": "schema",
+          "toPort": "schema",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "d3",
+          "from": "author",
+          "to": "validate",
+          "fromPort": "graph",
+          "toPort": "graph",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "d4",
+          "from": "author",
+          "to": "dem-align",
+          "fromPort": "graph",
+          "toPort": "graph",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "d5",
+          "from": "validate",
+          "to": "author",
+          "fromPort": "report",
+          "toPort": "report",
+          "kind": "control",
+          "cyclic": true,
+          "guard": "report.pass == false",
+          "xor": null
+        },
+        {
+          "id": "d6",
+          "from": "validate",
+          "to": "register",
+          "fromPort": "report",
+          "toPort": "report",
+          "kind": "control",
+          "cyclic": false,
+          "guard": "report.pass == true",
+          "xor": null
+        },
+        {
+          "id": "d7",
+          "from": "dem-align",
+          "to": "register",
+          "fromPort": "verdict",
+          "toPort": "verdict",
+          "kind": "control",
+          "cyclic": false,
+          "guard": "verdict.kind == pass",
+          "xor": null
+        },
+        {
+          "id": "d7b",
+          "from": "author",
+          "to": "register",
+          "fromPort": "graph",
+          "toPort": "graph",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "d8",
+          "from": "register",
+          "to": "archive",
+          "fromPort": "lineage",
+          "toPort": "lineage",
+          "kind": "data",
+          "cyclic": true,
+          "guard": null,
+          "xor": null
+        }
+      ],
+      "ingress": [
+        {
+          "name": "ltm",
+          "type": "SkillIndex"
+        },
+        {
+          "name": "goals",
+          "type": "Goal[]"
+        },
+        {
+          "name": "lineage",
+          "type": "LineageArchive"
+        },
+        {
+          "name": "identity",
+          "type": "IdentitySnapshot"
+        },
+        {
+          "name": "fuel",
+          "type": "Fuel"
+        }
+      ],
+      "fuel": {
+        "d5": 4,
+        "d8": 8
+      },
+      "artifact": {
+        "version": "mneme.graph/pg-dem@1.1",
+        "inspect": "Authoring graph + lineage archive + live domain graphs.",
+        "versioning": "Live: mneme.domain/<id>@rev. Archive: immutable parent/child diffs.",
+        "validation": "Macedo T1–T4 checkers are frozen and hidden from GraphAuthor.",
+        "optimization": "DSPy GraphAuthor; ablate greedy vs score×1/children on ArchiveSample. Never jointly optimize the evaluator.",
+        "hash": "fnv1a:22eafb12"
+      }
+    },
+    {
+      "id": "pg-adl",
+      "code": "PG-ADL",
+      "purpose": "Find higher-order types across episodic, semantic, and structural stores — across twin partitions, not inside them. Cluster is Louvain on typed edges, ignoring twin labels. CutClassify forks: most communities become abstractions; a rare policy cut may emit a TwinSpec into lineage. Naming is a later prompt. Promote only after hold-out. Install a twin only via PG-TWIN + CoreBind.",
+      "state": "MemoryState.ltm, .adl_batch, .ltm.lineage, .core_snapshot",
+      "runtime": "Cycle: Sample (cross-partition) → Cluster → CutClassify → (ProposeAbstraction → Holdout → CompileNode → Reindex | PartitionPropose → LineageRecord) → Sample. TwinSpecs never enter Reindex. Install only via PG-TWIN + CoreBind after cap.mint.",
+      "nodes": [
+        {
+          "id": "sample",
+          "label": "SampleLTM",
+          "kind": "transform",
+          "role": "Draw a batch across partitions — not within one twin.",
+          "ports": [
+            {
+              "name": "ltm",
+              "type": "LTM",
+              "dir": "in"
+            },
+            {
+              "name": "go",
+              "type": "LineageAck?",
+              "dir": "in"
+            },
+            {
+              "name": "batch",
+              "type": "Batch",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:35e657a4",
+          "promptRef": null
+        },
+        {
+          "id": "cluster",
+          "label": "Cluster",
+          "kind": "transform",
+          "role": "Community-detect on structural edges (Louvain-class), ignoring twin labels.",
+          "ports": [
+            {
+              "name": "batch",
+              "type": "Batch",
+              "dir": "in"
+            },
+            {
+              "name": "groups",
+              "type": "Cluster[]",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:7b838c35",
+          "promptRef": null
+        },
+        {
+          "id": "cut-class",
+          "label": "CutClassify",
+          "kind": "transform",
+          "role": "Score a community as abstraction, skill, domain, or partition.",
+          "ports": [
+            {
+              "name": "groups",
+              "type": "Cluster[]",
+              "dir": "in"
+            },
+            {
+              "name": "kind",
+              "type": "CutKind",
+              "dir": "out"
+            },
+            {
+              "name": "groups_out",
+              "type": "Cluster[]",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:0bc353ba",
+          "promptRef": null
+        },
+        {
+          "id": "propose-abs",
+          "label": "ProposeAbstraction",
+          "kind": "prompt",
+          "role": "Name a higher-order type or invariant spanning clusters.",
+          "ports": [
+            {
+              "name": "groups",
+              "type": "Cluster[]",
+              "dir": "in"
+            },
+            {
+              "name": "kind",
+              "type": "CutKind",
+              "dir": "in"
+            },
+            {
+              "name": "score",
+              "type": "AbsScore?",
+              "dir": "in"
+            },
+            {
+              "name": "abs",
+              "type": "Abstraction",
+              "dir": "out"
+            }
+          ],
+          "signature": "clusters, cut_kind -> abstraction, support[], counterexamples[]",
+          "bodyHash": "fnv1a:44720678",
+          "promptRef": "prompts/pg-adl/propose-abs.md"
+        },
+        {
+          "id": "holdout",
+          "label": "HoldoutTest",
+          "kind": "transform",
+          "role": "Score reconstructive and predictive power on unseen episodes.",
+          "ports": [
+            {
+              "name": "abs",
+              "type": "Abstraction",
+              "dir": "in"
+            },
+            {
+              "name": "fuel",
+              "type": "Fuel",
+              "dir": "in"
+            },
+            {
+              "name": "score",
+              "type": "AbsScore",
+              "dir": "out"
+            },
+            {
+              "name": "abs_out",
+              "type": "Abstraction",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:535af265",
+          "promptRef": null
+        },
+        {
+          "id": "compile-node",
+          "label": "CompileNode",
+          "kind": "transform",
+          "role": "If score ≥ τ, author a semantic node into the LTM graph artifact.",
+          "ports": [
+            {
+              "name": "score",
+              "type": "AbsScore",
+              "dir": "in"
+            },
+            {
+              "name": "abs",
+              "type": "Abstraction",
+              "dir": "in"
+            },
+            {
+              "name": "node",
+              "type": "GraphNode",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:e7ff8918",
+          "promptRef": null
+        },
+        {
+          "id": "partition-propose",
+          "label": "PartitionPropose",
+          "kind": "prompt",
+          "role": "Rare: emit a TwinSpec candidate into lineage. Does not install. Does not reindex.",
+          "ports": [
+            {
+              "name": "groups",
+              "type": "Cluster[]",
+              "dir": "in"
+            },
+            {
+              "name": "kind",
+              "type": "CutKind",
+              "dir": "in"
+            },
+            {
+              "name": "spec",
+              "type": "TwinSpec",
+              "dir": "out"
+            }
+          ],
+          "signature": "cluster, secrecy, actions, capabilities -> twin_spec | reject",
+          "bodyHash": "fnv1a:2431b36c",
+          "promptRef": "prompts/pg-adl/partition-propose.md"
+        },
+        {
+          "id": "lineage-record",
+          "label": "LineageRecord",
+          "kind": "transform",
+          "role": "Append TwinSpec to lineage. Does not rewrite the live index. Retrieval must ignore uninstalled ids.",
+          "ports": [
+            {
+              "name": "spec",
+              "type": "TwinSpec",
+              "dir": "in"
+            },
+            {
+              "name": "ack",
+              "type": "LineageAck",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:98dbab59",
+          "promptRef": null
+        },
+        {
+          "id": "reindex",
+          "label": "Reindex",
+          "kind": "transform",
+          "role": "Rebuild the semantic index from promoted GraphNodes only. No TwinSpec port.",
+          "ports": [
+            {
+              "name": "node",
+              "type": "GraphNode",
+              "dir": "in"
+            },
+            {
+              "name": "ltm",
+              "type": "LTM",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:7f8f848d",
+          "promptRef": null
+        }
+      ],
+      "edges": [
+        {
+          "id": "a1",
+          "from": "sample",
+          "to": "cluster",
+          "fromPort": "batch",
+          "toPort": "batch",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "a2",
+          "from": "cluster",
+          "to": "cut-class",
+          "fromPort": "groups",
+          "toPort": "groups",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "a3",
+          "from": "cut-class",
+          "to": "propose-abs",
+          "fromPort": "kind",
+          "toPort": "kind",
+          "kind": "control",
+          "cyclic": false,
+          "guard": "kind != partition",
+          "xor": "a4"
+        },
+        {
+          "id": "a3b",
+          "from": "cut-class",
+          "to": "propose-abs",
+          "fromPort": "groups_out",
+          "toPort": "groups",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "a4",
+          "from": "cut-class",
+          "to": "partition-propose",
+          "fromPort": "kind",
+          "toPort": "kind",
+          "kind": "control",
+          "cyclic": false,
+          "guard": "kind == partition",
+          "xor": "a3"
+        },
+        {
+          "id": "a4b",
+          "from": "cut-class",
+          "to": "partition-propose",
+          "fromPort": "groups_out",
+          "toPort": "groups",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "a5",
+          "from": "propose-abs",
+          "to": "holdout",
+          "fromPort": "abs",
+          "toPort": "abs",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "a6",
+          "from": "holdout",
+          "to": "propose-abs",
+          "fromPort": "score",
+          "toPort": "score",
+          "kind": "control",
+          "cyclic": true,
+          "guard": "score < tau",
+          "xor": null
+        },
+        {
+          "id": "a7",
+          "from": "holdout",
+          "to": "compile-node",
+          "fromPort": "score",
+          "toPort": "score",
+          "kind": "control",
+          "cyclic": false,
+          "guard": "score >= tau",
+          "xor": "a6"
+        },
+        {
+          "id": "a7b",
+          "from": "holdout",
+          "to": "compile-node",
+          "fromPort": "abs_out",
+          "toPort": "abs",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "a8",
+          "from": "compile-node",
+          "to": "reindex",
+          "fromPort": "node",
+          "toPort": "node",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "a9",
+          "from": "partition-propose",
+          "to": "lineage-record",
+          "fromPort": "spec",
+          "toPort": "spec",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "a10",
+          "from": "reindex",
+          "to": "sample",
+          "fromPort": "ltm",
+          "toPort": "ltm",
+          "kind": "data",
+          "cyclic": true,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "a11",
+          "from": "lineage-record",
+          "to": "sample",
+          "fromPort": "ack",
+          "toPort": "go",
+          "kind": "control",
+          "cyclic": true,
+          "guard": "true",
+          "xor": null
+        }
+      ],
+      "ingress": [
+        {
+          "name": "ltm",
+          "type": "LTM"
+        },
+        {
+          "name": "fuel",
+          "type": "Fuel"
+        }
+      ],
+      "fuel": {
+        "a6": 4,
+        "a10": 8,
+        "a11": 8
+      },
+      "artifact": {
+        "version": "mneme.graph/pg-adl@1.1",
+        "inspect": "Loop graph + promoted node log.",
+        "versioning": "Abstractions are semantic nodes with parent cluster ids.",
+        "validation": "Holdout τ and Core note gate.",
+        "optimization": "DSPy proposer; MCTS over post-promotion graph shape.",
+        "hash": "fnv1a:58a8fde5"
+      }
+    },
+    {
+      "id": "pg-twin",
+      "code": "PG-TWIN",
+      "purpose": "Install a TwinSpec — seed or discovered — as a subgraph on the shared memory bus, with Core as a hard capability bound. Specs from PartitionPropose live in lineage until this graph commits them. Not a free-conversation agent society.",
+      "state": "MemoryState.twins[id], .wm.ranges, .ltm.partitions, .ltm.lineage, .core_snapshot",
+      "runtime": "Install is a DAG. Runtime actions always re-enter ActionGate. A Louvain community is not a twin; CutClassify + CoreBind are the joint. Contrast with AutoGen conversational mode (fails T1/T4).",
+      "nodes": [
+        {
+          "id": "manifest",
+          "label": "TwinManifest",
+          "kind": "transform",
+          "role": "Declare ports, adapters, private LTM partition, slot range.",
+          "ports": [
+            {
+              "name": "spec",
+              "type": "TwinSpec",
+              "dir": "in"
+            },
+            {
+              "name": "manifest",
+              "type": "TwinManifest",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:6078f4c2",
+          "promptRef": null
+        },
+        {
+          "id": "sense-attach",
+          "label": "SensoryAttach",
+          "kind": "transform",
+          "role": "Bind twin adapters onto L0 without rewriting shared adapters.",
+          "ports": [
+            {
+              "name": "installed",
+              "type": "TwinId",
+              "dir": "in"
+            },
+            {
+              "name": "manifest",
+              "type": "TwinManifest",
+              "dir": "in"
+            },
+            {
+              "name": "adapters",
+              "type": "AdapterSpec[]",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:5a7e8369",
+          "promptRef": null
+        },
+        {
+          "id": "slot-res",
+          "label": "SlotReserve",
+          "kind": "transform",
+          "role": "Reserve a private WM slot range on the shared executive.",
+          "ports": [
+            {
+              "name": "installed",
+              "type": "TwinId",
+              "dir": "in"
+            },
+            {
+              "name": "manifest",
+              "type": "TwinManifest",
+              "dir": "in"
+            },
+            {
+              "name": "range",
+              "type": "SlotRange",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:e4f84705",
+          "promptRef": null
+        },
+        {
+          "id": "ltm-part",
+          "label": "LtmPartition",
+          "kind": "transform",
+          "role": "Mount private LTM + read-filtered shared projection.",
+          "ports": [
+            {
+              "name": "installed",
+              "type": "TwinId",
+              "dir": "in"
+            },
+            {
+              "name": "manifest",
+              "type": "TwinManifest",
+              "dir": "in"
+            },
+            {
+              "name": "mount",
+              "type": "LtmMount",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:2d8bfc3f",
+          "promptRef": null
+        },
+        {
+          "id": "core-bind",
+          "label": "CoreBind",
+          "kind": "transform",
+          "role": "Intersect human-minted CapTokens with the manifest. Does not mint tokens. Binding.capabilities ⊆ minted.",
+          "ports": [
+            {
+              "name": "manifest",
+              "type": "TwinManifest",
+              "dir": "in"
+            },
+            {
+              "name": "identity",
+              "type": "IdentitySnapshot",
+              "dir": "in"
+            },
+            {
+              "name": "tokens",
+              "type": "CapToken[]",
+              "dir": "in"
+            },
+            {
+              "name": "binding",
+              "type": "CoreBinding",
+              "dir": "out"
+            },
+            {
+              "name": "denied",
+              "type": "Denied[]",
+              "dir": "out"
+            }
+          ],
+          "signature": "manifest, minted_tokens, constitution -> binding ⊆ tokens, denied[]",
+          "bodyHash": "fnv1a:b81549a7",
+          "promptRef": null
+        },
+        {
+          "id": "install",
+          "label": "TwinInstall",
+          "kind": "transform",
+          "role": "Commit a TwinSpec after steward ack. Emits twin.install. No attach before this node.",
+          "ports": [
+            {
+              "name": "binding",
+              "type": "CoreBinding",
+              "dir": "in"
+            },
+            {
+              "name": "approval",
+              "type": "StewardAck",
+              "dir": "in"
+            },
+            {
+              "name": "installed",
+              "type": "TwinId",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:a8687f5d",
+          "promptRef": null
+        },
+        {
+          "id": "twin-auth",
+          "label": "TwinAuthorize",
+          "kind": "transform",
+          "role": "Same policy plane as PG-CORE. Token covers action.",
+          "ports": [
+            {
+              "name": "installed",
+              "type": "TwinId",
+              "dir": "in"
+            },
+            {
+              "name": "cap",
+              "type": "CapToken",
+              "dir": "in"
+            },
+            {
+              "name": "action",
+              "type": "TwinAction",
+              "dir": "in"
+            },
+            {
+              "name": "permit",
+              "type": "Permit",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:a328da43",
+          "promptRef": null
+        },
+        {
+          "id": "action-gate",
+          "label": "ActionGate",
+          "kind": "transform",
+          "role": "The only ExternalEffect port. Fires only on permit.allowed.",
+          "ports": [
+            {
+              "name": "permit",
+              "type": "Permit",
+              "dir": "in"
+            },
+            {
+              "name": "action",
+              "type": "TwinAction",
+              "dir": "in"
+            },
+            {
+              "name": "effect",
+              "type": "ExternalEffect",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:224ca3e6",
+          "promptRef": null
+        }
+      ],
+      "edges": [
+        {
+          "id": "t1",
+          "from": "manifest",
+          "to": "core-bind",
+          "fromPort": "manifest",
+          "toPort": "manifest",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "t2",
+          "from": "core-bind",
+          "to": "install",
+          "fromPort": "binding",
+          "toPort": "binding",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "t3",
+          "from": "install",
+          "to": "sense-attach",
+          "fromPort": "installed",
+          "toPort": "installed",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "t4",
+          "from": "install",
+          "to": "slot-res",
+          "fromPort": "installed",
+          "toPort": "installed",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "t5",
+          "from": "install",
+          "to": "ltm-part",
+          "fromPort": "installed",
+          "toPort": "installed",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "t3b",
+          "from": "manifest",
+          "to": "sense-attach",
+          "fromPort": "manifest",
+          "toPort": "manifest",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "t4b",
+          "from": "manifest",
+          "to": "slot-res",
+          "fromPort": "manifest",
+          "toPort": "manifest",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "t5b",
+          "from": "manifest",
+          "to": "ltm-part",
+          "fromPort": "manifest",
+          "toPort": "manifest",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "t6",
+          "from": "install",
+          "to": "twin-auth",
+          "fromPort": "installed",
+          "toPort": "installed",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "t7",
+          "from": "twin-auth",
+          "to": "action-gate",
+          "fromPort": "permit",
+          "toPort": "permit",
+          "kind": "control",
+          "cyclic": false,
+          "guard": "permit.allowed == true",
+          "xor": null
+        }
+      ],
+      "ingress": [
+        {
+          "name": "spec",
+          "type": "TwinSpec"
+        },
+        {
+          "name": "identity",
+          "type": "IdentitySnapshot"
+        },
+        {
+          "name": "tokens",
+          "type": "CapToken[]"
+        },
+        {
+          "name": "approval",
+          "type": "StewardAck"
+        },
+        {
+          "name": "action",
+          "type": "TwinAction"
+        },
+        {
+          "name": "cap",
+          "type": "CapToken"
+        }
+      ],
+      "fuel": {},
+      "artifact": {
+        "version": "mneme.graph/pg-twin@1.0",
+        "inspect": "Manifest + binding + denied capabilities.",
+        "versioning": "Twins version independently of Core; Core binds them.",
+        "validation": "No external action port outside ActionGate.",
+        "optimization": "Compile ActionGate per twin; freeze Core.",
+        "hash": "fnv1a:3ce13f78"
+      }
+    },
+    {
+      "id": "pg-audit",
+      "code": "PG-AUDIT",
+      "purpose": "Lint prompt bodies for capability language, twin-id conventions, and routing-by-convention. Output is a flagged diff, a flag-rate trend, and a frozen sample of clean prompts. Empirical only. Never a certificate field. Never permit, deny, install, or write Core. Writes steward inbox, not LTM.",
+      "state": "MemoryState.ltm.lineage, .prompt_corpus",
+      "runtime": "Scheduled after GraphAuthor, SkillDistill, and SelfModelUpdate content changes. HeuristicLint and SampleClean are frozen. ModelLint is untrusted. Report writes steward inbox only. Compiling ModelLint to minimize or flood flags is objective hacking — forbidden.",
+      "nodes": [
+        {
+          "id": "collect",
+          "label": "PromptCollect",
+          "kind": "transform",
+          "role": "Enumerate prompt files referenced by a graph artifact. Diff against previous report.",
+          "ports": [
+            {
+              "name": "artifact",
+              "type": "GraphArtifact",
+              "dir": "in"
+            },
+            {
+              "name": "previous",
+              "type": "PromptAuditReport?",
+              "dir": "in"
+            },
+            {
+              "name": "files",
+              "type": "PromptFile[]",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:f288ea9c",
+          "promptRef": null
+        },
+        {
+          "id": "audit-heuristics",
+          "label": "HeuristicLint",
+          "kind": "transform",
+          "role": "Frozen rules: capability verbs, twin-id conventions, CALLS/CONTAINS in prose, routing-by-name.",
+          "ports": [
+            {
+              "name": "files",
+              "type": "PromptFile[]",
+              "dir": "in"
+            },
+            {
+              "name": "flags",
+              "type": "Flag[]",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:78f3d0c1",
+          "promptRef": null
+        },
+        {
+          "id": "model-lint",
+          "label": "ModelLint",
+          "kind": "prompt",
+          "role": "Untrusted pass over the same files. Same Flag[] schema. Never the sole source.",
+          "ports": [
+            {
+              "name": "files",
+              "type": "PromptFile[]",
+              "dir": "in"
+            },
+            {
+              "name": "flags",
+              "type": "Flag[]",
+              "dir": "out"
+            }
+          ],
+          "signature": "prompt_file -> flags: Flag[]",
+          "bodyHash": "fnv1a:f1f48a61",
+          "promptRef": "prompts/pg-audit/model-lint.md"
+        },
+        {
+          "id": "sample-clean",
+          "label": "SampleClean",
+          "kind": "transform",
+          "role": "Frozen sample of unflagged prompts. Rate and floor are IR, not a vibe.",
+          "ports": [
+            {
+              "name": "files",
+              "type": "PromptFile[]",
+              "dir": "in"
+            },
+            {
+              "name": "flags",
+              "type": "Flag[]",
+              "dir": "in"
+            },
+            {
+              "name": "policy",
+              "type": "AuditPolicy",
+              "dir": "in"
+            },
+            {
+              "name": "sample",
+              "type": "PromptFile[]",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:939a9fb9",
+          "promptRef": null
+        },
+        {
+          "id": "report",
+          "label": "AuditReport",
+          "kind": "transform",
+          "role": "Join flags + clean sample + rate trend. Writes steward inbox only. Not a gate. Not LTM.",
+          "ports": [
+            {
+              "name": "heur",
+              "type": "Flag[]",
+              "dir": "in"
+            },
+            {
+              "name": "model",
+              "type": "Flag[]",
+              "dir": "in"
+            },
+            {
+              "name": "sample",
+              "type": "PromptFile[]",
+              "dir": "in"
+            },
+            {
+              "name": "previous",
+              "type": "PromptAuditReport?",
+              "dir": "in"
+            },
+            {
+              "name": "audit",
+              "type": "PromptAuditReport",
+              "dir": "out"
+            },
+            {
+              "name": "inbox",
+              "type": "StewardInbox",
+              "dir": "out"
+            },
+            {
+              "name": "trend",
+              "type": "FlagTrend",
+              "dir": "out"
+            }
+          ],
+          "signature": null,
+          "bodyHash": "fnv1a:0260c6be",
+          "promptRef": null
+        }
+      ],
+      "edges": [
+        {
+          "id": "u1",
+          "from": "collect",
+          "to": "audit-heuristics",
+          "fromPort": "files",
+          "toPort": "files",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "u2",
+          "from": "collect",
+          "to": "model-lint",
+          "fromPort": "files",
+          "toPort": "files",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "u3",
+          "from": "collect",
+          "to": "sample-clean",
+          "fromPort": "files",
+          "toPort": "files",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "u4",
+          "from": "audit-heuristics",
+          "to": "report",
+          "fromPort": "flags",
+          "toPort": "heur",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "u5",
+          "from": "model-lint",
+          "to": "report",
+          "fromPort": "flags",
+          "toPort": "model",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "u6",
+          "from": "audit-heuristics",
+          "to": "sample-clean",
+          "fromPort": "flags",
+          "toPort": "flags",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        },
+        {
+          "id": "u7",
+          "from": "sample-clean",
+          "to": "report",
+          "fromPort": "sample",
+          "toPort": "sample",
+          "kind": "data",
+          "cyclic": false,
+          "guard": null,
+          "xor": null
+        }
+      ],
+      "ingress": [
+        {
+          "name": "artifact",
+          "type": "GraphArtifact"
+        },
+        {
+          "name": "previous",
+          "type": "PromptAuditReport?"
+        },
+        {
+          "name": "policy",
+          "type": "AuditPolicy"
+        }
+      ],
+      "fuel": {},
+      "artifact": {
+        "version": "mneme.graph/pg-audit@1.1",
+        "inspect": "Lint graph + last report hash + sample policy.",
+        "versioning": "Heuristic rules and sample floor version independently of ModelLint text.",
+        "validation": "No Permit, ExternalEffect, TwinId, or Core write ports. Inbox is not LTM.",
+        "optimization": "Do not compile toward fewer flags or more flags.",
+        "hash": "fnv1a:14147940"
+      }
+    }
+  ],
+  "twins": [
+    {
+      "id": "soma",
+      "origin": "seed",
+      "never": "Cannot write Core. Cannot expand into covert tracking (DEM would fail CoreAlign)."
+    },
+    {
+      "id": "agora",
+      "origin": "seed",
+      "never": "Cannot install a domain that spies on collaborators — PG-DEM + PG-CORE jointly refuse."
+    },
+    {
+      "id": "oikos",
+      "origin": "seed",
+      "never": "Cannot author a surveillance domain. DEM's CoreAlign is the lock."
+    },
+    {
+      "id": "nomos",
+      "origin": "seed",
+      "never": "Cannot rewrite Core values about money. Can propose a SelfModelDelta; Core decides."
+    }
+  ],
+  "frozen": [
+    "validate",
+    "holdout",
+    "cut-class",
+    "structural",
+    "archive",
+    "audit-heuristics",
+    "sample-clean"
+  ],
+  "auditPolicy": {
+    "sampleRate": 0.05,
+    "sampleFloor": 3,
+    "spike": 3
+  }
+}
