@@ -47,7 +47,9 @@ bun run listen
 
 By default it listens on the unix socket `~/.mneme/helix.sock`, sweeps
 the spool directory `~/.mneme/spool` every five seconds, appends clean
-packets to `~/.mneme/buffer.jsonl` (or `~/.mneme/buffer.ndjson` if that file already exists and jsonl does not), and writes a `mneme.trace/v1` to
+packets to `~/.mneme/buffer.jsonl` (or legacy
+`~/.mneme/buffer.ndjson` when it contains packets and jsonl does not),
+and writes a `mneme.trace/v1` to
 `helix/traces/listen.json` after every batch. Flags: `--sock`,
 `--spool`, `--buffer`, `--out`, `--max-slots`, and `--once` (drain the
 spool one time, write the trace, and exit — useful without a daemon).

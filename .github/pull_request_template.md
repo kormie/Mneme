@@ -30,8 +30,8 @@ list. Run each command and paste its literal output underneath.
   <paste output>
   ```
 
-- [ ] `git diff --stat -- spec/` — must be **empty** unless this PR is a
-  steward-initiated pack import
+- [ ] `git diff --stat origin/main...HEAD -- spec spec.sha256` — must be
+  **empty** unless this PR is a steward-initiated pack import
 
   ```text
   <paste output — expect nothing>

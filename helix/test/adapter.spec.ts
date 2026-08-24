@@ -6,8 +6,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "bun:test";
+import { defaultBufferFile } from "../src/buffer-path.js";
 import { loadKernel } from "../src/kernel.js";
-import { defaultBufferFile, drainSpool, listenChecks, processBatch, senseBatch } from "../src/listen.js";
+import { drainSpool, listenChecks, processBatch, senseBatch } from "../src/listen.js";
 import { isObservation, parseObservation, type Observation } from "../src/observation.js";
 import { makeEmitter } from "../src/scheduler.js";
 import { countType } from "../src/trace.js";
@@ -209,12 +210,27 @@ describe("a batch mixing channels", () => {
 });
 
 describe("the default buffer path", () => {
-  it("prefers buffer.jsonl and falls back to buffer.ndjson only when that is the existing file", () => {
+  it("uses jsonl when neither file contains a valid packet", () => {
     const dir = tmp("buf-ext");
     expect(defaultBufferFile(dir)).toBe(join(dir, "buffer.jsonl"));
     writeFileSync(join(dir, "buffer.ndjson"), "\n");
+    expect(defaultBufferFile(dir)).toBe(join(dir, "buffer.jsonl"));
+  });
+
+  it("keeps a populated legacy buffer visible when jsonl has no valid packets", () => {
+    const dir = tmp("buf-legacy");
+    writeFileSync(join(dir, "buffer.jsonl"), "\nnot an Observation\n");
+    writeFileSync(join(dir, "buffer.ndjson"), JSON.stringify(fixturePacket()) + "\n");
     expect(defaultBufferFile(dir)).toBe(join(dir, "buffer.ndjson"));
-    writeFileSync(join(dir, "buffer.jsonl"), "\n");
+  });
+
+  it("prefers jsonl when both filenames contain valid packets", () => {
+    const dir = tmp("buf-both");
+    writeFileSync(join(dir, "buffer.ndjson"), JSON.stringify(fixturePacket()) + "\n");
+    writeFileSync(
+      join(dir, "buffer.jsonl"),
+      JSON.stringify({ ...fixturePacket(), id: "cc-jsonl-new" }) + "\n",
+    );
     expect(defaultBufferFile(dir)).toBe(join(dir, "buffer.jsonl"));
   });
 });

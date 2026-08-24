@@ -118,6 +118,11 @@ Definition of done for the slice (steward-held, in order of strength):
   the pure `by decide` certificate; `native_decide` is a fast path, not
   the artifact (ADR-014). "judge fail=0" alone is never done.
 
+Helix 0.10 ships judged and certified-static only; certified runtime is
+blocked on the undeclared `tau` and resumes only after a steward-issued
+0.11 pack, so roadmap steps 4–5 are deferred, not current-slice
+authorization.
+
 ### Roadmap (work top to bottom, small PRs)
 
 1. Deepen the typed kernel loader (`helix/src/kernel.ts`) to fully mirror

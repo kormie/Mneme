@@ -14,7 +14,6 @@
  */
 import {
   appendFileSync,
-  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -25,6 +24,7 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
+import { defaultBufferFile } from "./buffer-path.js";
 import { loadKernel, type KernelIR } from "./kernel.js";
 import { makeEmitter, runGraph, type Emitter } from "./scheduler.js";
 import type { AnomalyFlag, AnomalyMatch } from "./anomaly.js";
@@ -156,16 +156,6 @@ interface ListenOptions {
   traceFile: string;
   maxSlots: number;
   once: boolean;
-}
-
-
-/** Default L0 buffer path. JSON Lines (one Observation per line). If the
- *  operator already has ~/.mneme/buffer.ndjson and has not started a
- *  jsonl file, keep writing there so a rename does not split the log. */
-export function defaultBufferFile(base: string): string {
-  const jsonl = join(base, "buffer.jsonl");
-  const ndjson = join(base, "buffer.ndjson");
-  return !existsSync(jsonl) && existsSync(ndjson) ? ndjson : jsonl;
 }
 
 function defaults(): ListenOptions {

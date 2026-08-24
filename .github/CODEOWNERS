@@ -25,6 +25,11 @@
 /proofs/*.lean       @kormie
 /proofs/**/*.lean    @kormie
 
+# Proof build targets and pinned Lean toolchain determine which certified
+# artifacts CI checks and under which kernel.
+/proofs/lakefile.toml @kormie
+/proofs/lean-toolchain @kormie
+
 # Lean law-set sources under spec/lean/ — already covered by /spec/**
 # above; listed explicitly for clarity per the law-set ownership rule.
 /spec/lean/**        @kormie
@@ -48,3 +53,5 @@
 /.github/workflows/ci.yml @kormie
 /scripts/verify-spec.sh   @kormie
 /scripts/sync-lean.sh     @kormie
+/scripts/bootstrap.sh     @kormie
+/scripts/install-elan.sh  @kormie
