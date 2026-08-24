@@ -47,7 +47,7 @@ bun run listen
 
 By default it listens on the unix socket `~/.mneme/helix.sock`, sweeps
 the spool directory `~/.mneme/spool` every five seconds, appends clean
-packets to `~/.mneme/buffer.ndjson`, and writes a `mneme.trace/v1` to
+packets to `~/.mneme/buffer.jsonl` (or `~/.mneme/buffer.ndjson` if that file already exists and jsonl does not), and writes a `mneme.trace/v1` to
 `helix/traces/listen.json` after every batch. Flags: `--sock`,
 `--spool`, `--buffer`, `--out`, `--max-slots`, and `--once` (drain the
 spool one time, write the trace, and exit — useful without a daemon).
@@ -72,7 +72,7 @@ command ([DOGFOOD.md](DOGFOOD.md)):
 cd helix
 bun run dogfood                            # buffer first, inbox fallback,
                                            # then judge the emitted trace
-bun run tray --buffer ~/.mneme/buffer.ndjson   # or drain just the buffer
+bun run tray --buffer ~/.mneme/buffer.jsonl   # or drain just the buffer
 ```
 
 The drain feeds the buffered packets through exactly the write path

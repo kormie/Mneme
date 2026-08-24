@@ -29,7 +29,7 @@ describe("the L0 sensory buffer drains into tray LTM", () => {
   it("drains a fixture claude-code packet under consume-once permits, idempotently", () => {
     // A temp buffer holding exactly what the listener would have appended.
     const packet = fixturePacket();
-    const bufferFile = join(tmp("drain"), "buffer.ndjson");
+    const bufferFile = join(tmp("drain"), "buffer.jsonl");
     writeFileSync(bufferFile, JSON.stringify(packet) + "\n");
     const storeFile = join(tmp("drain-store"), "tray.json");
 
@@ -90,7 +90,7 @@ describe("the L0 sensory buffer drains into tray LTM", () => {
 
   it("treats a re-delivered id as a replacement, not a second packet", () => {
     const packet = fixturePacket();
-    const bufferFile = join(tmp("redeliver"), "buffer.ndjson");
+    const bufferFile = join(tmp("redeliver"), "buffer.jsonl");
     writeFileSync(bufferFile, JSON.stringify(packet) + "\n");
     // At-least-once delivery: the same id arrives again, edited.
     appendFileSync(
@@ -117,7 +117,7 @@ describe("the L0 sensory buffer drains into tray LTM", () => {
       kind: "user-prompt",
       text: "set AWS_SECRET_ACCESS_KEY=abc123 in the deploy env",
     };
-    const bufferFile = join(tmp("leaky"), "buffer.ndjson");
+    const bufferFile = join(tmp("leaky"), "buffer.jsonl");
     writeFileSync(
       bufferFile,
       JSON.stringify(clean) + "\n" + JSON.stringify(leaky) + "\n",
@@ -160,7 +160,7 @@ describe("the L0 sensory buffer drains into tray LTM", () => {
   });
 
   it("skips non-packet lines instead of failing the whole drain", () => {
-    const bufferFile = join(tmp("junk"), "buffer.ndjson");
+    const bufferFile = join(tmp("junk"), "buffer.jsonl");
     writeFileSync(
       bufferFile,
       JSON.stringify(fixturePacket()) + "\nnot a packet\n{\"id\":\"\"}\n",
@@ -171,7 +171,7 @@ describe("the L0 sensory buffer drains into tray LTM", () => {
   });
 
   it("refuses a buffer with no packets at all", () => {
-    const bufferFile = join(tmp("empty"), "buffer.ndjson");
+    const bufferFile = join(tmp("empty"), "buffer.jsonl");
     writeFileSync(bufferFile, "\n\n");
     expect(() => readBuffer(bufferFile)).toThrow(/no Observation packets/);
   });

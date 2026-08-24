@@ -43,7 +43,7 @@ function fixturePacket(): Observation {
 describe("--dogfood over a fixture buffer", () => {
   const dir = tmp("buffer");
   const packet = fixturePacket();
-  const bufferFile = join(dir, "buffer.ndjson");
+  const bufferFile = join(dir, "buffer.jsonl");
   const storeFile = join(dir, "store.json");
   const outFile = join(dir, "trace.json");
   writeFileSync(bufferFile, JSON.stringify(packet) + "\n");
@@ -118,7 +118,7 @@ describe("--dogfood source resolution", () => {
     writeFileSync(join(inbox, "monday.md"), "# Monday\n\n## Done\n\n- drained the buffer\n");
     const { stdout } = await run("bun", [
       TRAY, "--dogfood",
-      "--buffer", join(dir, "no-buffer.ndjson"),
+      "--buffer", join(dir, "no-buffer.jsonl"),
       "--inbox", inbox,
       "--store", storeFile,
       "--out", join(dir, "trace.json"),
@@ -130,7 +130,7 @@ describe("--dogfood source resolution", () => {
 
   it("prefers a buffer with packets over a populated inbox", () => {
     const dir = tmp("prefer");
-    const bufferFile = join(dir, "buffer.ndjson");
+    const bufferFile = join(dir, "buffer.jsonl");
     writeFileSync(bufferFile, JSON.stringify(fixturePacket()) + "\n");
     const src = dogfoodSource(bufferFile, join(HELIX_ROOT, "fixtures", "tray"));
     expect(src.kind).toBe("buffer");
@@ -138,7 +138,7 @@ describe("--dogfood source resolution", () => {
 
   it("drains nothing when buffer and inbox are both empty: exit 0, no write", async () => {
     const dir = tmp("empty");
-    const bufferFile = join(dir, "buffer.ndjson");
+    const bufferFile = join(dir, "buffer.jsonl");
     writeFileSync(bufferFile, "\n"); // exists, holds no packets
     const storeFile = join(dir, "store.json");
     const outFile = join(dir, "trace.json");
