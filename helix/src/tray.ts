@@ -17,8 +17,10 @@
  * constitution needs a real ValueFilter first.
  */
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { basename, dirname, join, resolve } from "node:path";
+import { judge, type Judgement } from "./judge.js";
 import { loadKernel, type KernelIR } from "./kernel.js";
 import { makeEmitter, runGraph, type Appliers, type Emitter } from "./scheduler.js";
 import { type AnomalyFlag, type AnomalyMatch } from "./anomaly.js";
@@ -383,12 +385,19 @@ export function permitPairing(
   return pairs;
 }
 
-/** The `file` channel: every markdown note in the inbox, one packet each. */
-export function readInbox(inboxDir: string): Observation[] {
-  const files = readdirSync(inboxDir)
-    .filter((f) => f.endsWith(".md"))
-    .sort();
-  if (files.length === 0) throw new Error(`no .md notes in inbox: ${inboxDir}`);
+/**
+ * Scan an inbox directory for the `file` channel: every markdown note,
+ * one packet each. A missing directory or an empty one is an ordinary
+ * state here (no packets), not an error — explicit `--inbox` mode layers
+ * its own error on top via readInbox.
+ */
+export function scanInbox(inboxDir: string): Observation[] {
+  let files: string[];
+  try {
+    files = readdirSync(inboxDir).filter((f) => f.endsWith(".md")).sort();
+  } catch {
+    return [];
+  }
   return files.map((f) => ({
     id: basename(f),
     t: Math.floor(statSync(join(inboxDir, f)).mtimeMs),
@@ -396,6 +405,13 @@ export function readInbox(inboxDir: string): Observation[] {
     kind: "note",
     text: readFileSync(join(inboxDir, f), "utf8"),
   }));
+}
+
+/** The `file` channel: every markdown note in the inbox, one packet each. */
+export function readInbox(inboxDir: string): Observation[] {
+  const packets = scanInbox(inboxDir);
+  if (packets.length === 0) throw new Error(`no .md notes in inbox: ${inboxDir}`);
+  return packets;
 }
 
 /**
@@ -410,18 +426,49 @@ export function readInbox(inboxDir: string): Observation[] {
 export function readBuffer(
   bufferFile: string,
 ): { packets: Observation[]; skipped: number } {
+  const scan = scanBufferText(readFileSync(bufferFile, "utf8"));
+  if (scan.packets.length === 0) {
+    throw new Error(`no Observation packets in buffer: ${bufferFile}`);
+  }
+  return scan;
+}
+
+function scanBufferText(text: string): { packets: Observation[]; skipped: number } {
   const byId = new Map<string, Observation>();
   let skipped = 0;
-  for (const line of readFileSync(bufferFile, "utf8").split("\n")) {
+  for (const line of text.split("\n")) {
     if (line.trim() === "") continue;
     const packet = parseObservation(line);
     if (packet === null) skipped += 1;
     else byId.set(packet.id, packet);
   }
-  if (byId.size === 0) {
-    throw new Error(`no Observation packets in buffer: ${bufferFile}`);
-  }
   return { packets: [...byId.values()], skipped };
+}
+
+export type DogfoodSource =
+  | { kind: "buffer"; packets: Observation[]; skipped: number }
+  | { kind: "inbox"; packets: Observation[] }
+  | { kind: "nothing"; skipped: number };
+
+/**
+ * Resolve the dogfood ingest source (DOGFOOD.md): the L0 sensory buffer
+ * when it holds packets, else the documented inbox default, else
+ * nothing. Unlike the explicit --buffer/--inbox modes, an absent or
+ * empty source is an ordinary Monday, not an error: the caller prints
+ * "nothing to drain" and invents no write.
+ */
+export function dogfoodSource(bufferFile: string, inboxDir: string): DogfoodSource {
+  let text: string | null;
+  try {
+    text = readFileSync(bufferFile, "utf8");
+  } catch {
+    text = null;
+  }
+  const scan = text === null ? { packets: [], skipped: 0 } : scanBufferText(text);
+  if (scan.packets.length > 0) return { kind: "buffer", ...scan };
+  const notes = scanInbox(inboxDir);
+  if (notes.length > 0) return { kind: "inbox", packets: notes };
+  return { kind: "nothing", skipped: scan.skipped };
 }
 
 /**
@@ -552,86 +599,18 @@ function checksOk(checks: Checks): boolean {
   return Object.values(checks).every(Boolean);
 }
 
-function main(): void {
-  // Developers pipe CLI output through head/grep; a closed pipe is not an
-  // error worth a stack trace.
-  process.stdout.on("error", (e: NodeJS.ErrnoException) => {
-    if (e.code === "EPIPE") process.exit(0);
-    throw e;
-  });
-  const args = process.argv.slice(2);
-  let inbox: string | null = null;
-  let buffer: string | null = null;
-  let out: string | null = null;
-  let storeFile = join(HELIX_ROOT, "store", "tray.json");
-  let ask: string | null = null;
-  for (let i = 0; i < args.length; i++) {
-    const flag = args[i] as string;
-    if (
-      flag === "--inbox" || flag === "--buffer" || flag === "--out" ||
-      flag === "--store" || flag === "--ask"
-    ) {
-      const value = args[++i];
-      if (value === undefined) throw new Error(`missing value for ${flag}`);
-      if (flag === "--inbox") inbox = resolve(value);
-      else if (flag === "--buffer") buffer = resolve(value);
-      else if (flag === "--out") out = resolve(value);
-      else if (flag === "--store") storeFile = resolve(value);
-      else ask = value;
-    } else {
-      throw new Error(`unknown argument: ${flag}`);
-    }
-  }
-  if (inbox !== null && buffer !== null) {
-    throw new Error("choose one ingest source per run: --inbox or --buffer");
-  }
-
-  if (ask !== null) {
-    const report = runAsk(ask, storeFile);
-    const outFile = out ?? join(HELIX_ROOT, "traces", "ask.json");
-    writeTrace(report.trace, outFile);
-    console.log(`ask: "${report.question}" over ${report.storeNotes} remembered notes (${storeFile})`);
-    if (report.storeNotes === 0) {
-      console.log("  no memory yet — drop notes in the inbox and run an ingest first");
-    } else if (report.hits.length === 0) {
-      console.log("  no matches");
-    }
-    for (const h of report.hits.slice(0, 5)) {
-      console.log(`  ${h.note} — "${h.title}" (score ${h.score}; matched ${h.matched.join(", ")})`);
-      for (const t of h.triples.filter((t) => t.p !== "mentions")) {
-        console.log(`      (${t.s}, ${t.p}, ${t.o})`);
-      }
-      const kw = h.triples.filter((t) => t.p === "mentions").length;
-      if (kw > 0) console.log(`      + ${kw} body keywords indexed`);
-    }
-    console.log(`trace: ${outFile} (mneme.trace/v1, ${report.trace.events.length} events; read-only — no store.write, no permit needed)`);
-    console.log(`checks (untrusted TS mirrors, slice-local): ${checksOk(report.checks) ? "PASS" : "FAIL"}`);
-    if (!checksOk(report.checks)) process.exitCode = 1;
-    return;
-  }
-
-  let report: TrayReport;
-  let sourceLine: string;
-  if (buffer !== null) {
-    const { packets, skipped } = readBuffer(buffer);
-    report = drainPackets(packets, storeFile);
-    sourceLine = `tray: ${report.notes.length} packet(s) from buffer ${buffer}` +
-      (skipped > 0 ? ` (${skipped} non-packet line(s) skipped)` : "");
-  } else {
-    const inboxDir = inbox ?? join(HELIX_ROOT, "fixtures", "tray");
-    let inboxStat;
-    try {
-      inboxStat = statSync(inboxDir);
-    } catch {
-      throw new Error(`inbox not found: ${inboxDir}`);
-    }
-    if (!inboxStat.isDirectory()) throw new Error(`inbox is not a directory: ${inboxDir}`);
-    report = runTray(inboxDir, storeFile);
-    sourceLine = `tray: ${report.notes.length} notes from ${inboxDir}`;
-  }
-  const outFile = out ?? join(HELIX_ROOT, "traces", "tray.json");
-  writeTrace(report.trace, outFile);
-
+/**
+ * Print the drain digest shared by every write mode (--inbox, --buffer,
+ * --dogfood): what was quarantined, deferred, and committed, then the
+ * slice-local untrusted checks over the emitted trace. Returns whether
+ * everything a drain must uphold held.
+ */
+function printDrainDigest(
+  report: TrayReport,
+  sourceLine: string,
+  storeFile: string,
+  outFile: string,
+): boolean {
   const ev = report.trace.events;
   const twinInstalls = countType(ev, "twin.install");
   const stewardAcks = countType(ev, "steward.ack");
@@ -682,13 +661,188 @@ function main(): void {
     "not claimed: full Mneme.Trace.Temporal also needs cluster.cut and archive.sample (ADL/DEM, out of this slice); this report is slice-local and the trace is not yet imported into Lean",
   );
 
-  const ok =
+  return (
     checksOk(report.checks) &&
     twinInstalls === 0 &&
     stewardAcks === 0 &&
     capMints === 0 &&
-    twinActions === 0;
-  if (!ok) {
+    twinActions === 0
+  );
+}
+
+/** The two Temporal liveness laws a tray trace can never satisfy honestly. */
+function livenessRows(j: Judgement): { id: string; lean: string; status: string }[] {
+  return j.rows.filter((r) => r.liveness).map((r) => ({ id: r.id, lean: r.lean, status: r.status }));
+}
+
+/**
+ * The Monday-afternoon operator command (DOGFOOD.md): resolve the source
+ * (buffer, else inbox), drain it through the one permit-gated write
+ * path, judge the emitted trace with the untrusted judge, and print the
+ * three dogfood prompts. Returns the process exit code: 0 when the
+ * drain's checks and the judge's safety laws hold (the two liveness
+ * gaps must stay red — a green one means a stuffed trace); 1 otherwise.
+ */
+function runDogfood(
+  bufferFile: string,
+  inboxDir: string,
+  storeFile: string,
+  outFile: string,
+): number {
+  const src = dogfoodSource(bufferFile, inboxDir);
+  if (src.kind === "nothing") {
+    console.log("dogfood: nothing to drain");
+    console.log(`  buffer ${bufferFile}: absent or no packets` +
+      (src.skipped > 0 ? ` (${src.skipped} non-packet line(s) ignored)` : ""));
+    console.log(`  inbox ${inboxDir}: absent or no .md notes`);
+    console.log("nothing was written: no store.write, no trace, no invented memory");
+    return 0;
+  }
+
+  const kernel = loadKernel();
+  const report = drainPackets(src.packets, storeFile, kernel);
+  writeTrace(report.trace, outFile);
+  const sourceLine = src.kind === "buffer"
+    ? `dogfood: ${report.notes.length} packet(s) from buffer ${bufferFile}` +
+      (src.skipped > 0 ? ` (${src.skipped} non-packet line(s) skipped)` : "")
+    : `dogfood: ${report.notes.length} note(s) from inbox ${inboxDir} (buffer empty)`;
+  const drainOk = printDrainDigest(report, sourceLine, storeFile, outFile);
+
+  console.log("");
+  const j = judge(kernel, report.trace.events);
+  const safetyPass = j.judged;
+  const liveness = livenessRows(j);
+  const livenessStillRed = liveness.every((r) => r.status === "fail");
+  console.log("judge (untrusted TS fold over spec/inhabitants.md, ADR-008) on this trace:");
+  console.log(`  decidable: pass=${j.decidable.pass} fail=${j.decidable.fail} | temporal: pass=${j.temporal.pass} fail=${j.temporal.fail} skip=${j.temporal.skip}`);
+  console.log(
+    `  safety: ${safetyPass ? "PASS" : "FAIL"}` +
+      (j.traceSafetyFails.length > 0 ? ` (${j.traceSafetyFails.join(", ")})` : ""),
+  );
+  console.log("  liveness gaps (must stay fail — this slice never runs pg-adl/pg-dem and stuffs no events):");
+  for (const r of liveness) {
+    console.log(
+      `    ${r.id} — ${r.lean}: ${r.status}` +
+        (r.status === "fail"
+          ? " (correct; blocks RuntimeCertificate only)"
+          : " — UNEXPECTED: a satisfied liveness law here means stuffed events; stop and ask Kormie"),
+    );
+  }
+  console.log("  judged is not certified: the Lean terms in proofs/ are the artifacts, and this trace is not a RuntimeCertificate candidate.");
+
+  console.log("");
+  console.log("dogfood prompts — send answers (or a screenshot of this run) to Kormie (@kormie):");
+  console.log("  1. Useful? Did the per-note digest and the trace tell you anything about");
+  console.log("     your own notes that a folder listing would not have?");
+  console.log("  2. Creepy? Was there any moment the tray felt like it overstepped — read too");
+  console.log("     much, inferred too much, or kept something you did not expect it to keep?");
+  console.log("  3. Missing Core clause? The constitution is empty, so every commit passed.");
+  console.log("     What is the first clause you wished had been there to stop or reshape a");
+  console.log("     write? Phrase it in your own words; the steward, not an agent, decides");
+  console.log("     what enters Core.");
+
+  if (!drainOk || !safetyPass || !livenessStillRed) {
+    console.error("dogfood: checks FAILED");
+    return 1;
+  }
+  return 0;
+}
+
+function main(): void {
+  // Developers pipe CLI output through head/grep; a closed pipe is not an
+  // error worth a stack trace.
+  process.stdout.on("error", (e: NodeJS.ErrnoException) => {
+    if (e.code === "EPIPE") process.exit(0);
+    throw e;
+  });
+  const args = process.argv.slice(2);
+  let inbox: string | null = null;
+  let buffer: string | null = null;
+  let out: string | null = null;
+  let storeFile = join(HELIX_ROOT, "store", "tray.json");
+  let ask: string | null = null;
+  let dogfood = false;
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i] as string;
+    if (flag === "--dogfood") {
+      dogfood = true;
+    } else if (
+      flag === "--inbox" || flag === "--buffer" || flag === "--out" ||
+      flag === "--store" || flag === "--ask"
+    ) {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`missing value for ${flag}`);
+      if (flag === "--inbox") inbox = resolve(value);
+      else if (flag === "--buffer") buffer = resolve(value);
+      else if (flag === "--out") out = resolve(value);
+      else if (flag === "--store") storeFile = resolve(value);
+      else ask = value;
+    } else {
+      throw new Error(`unknown argument: ${flag}`);
+    }
+  }
+  if (dogfood) {
+    if (ask !== null) throw new Error("choose one mode per run: --dogfood or --ask");
+    // With --dogfood, --buffer and --inbox merely relocate the documented
+    // defaults; source preference (buffer first) stays the same.
+    process.exitCode = runDogfood(
+      buffer ?? join(homedir(), ".mneme", "buffer.ndjson"),
+      inbox ?? join(homedir(), "mneme-tray"),
+      storeFile,
+      out ?? join(HELIX_ROOT, "traces", "dogfood.json"),
+    );
+    return;
+  }
+  if (inbox !== null && buffer !== null) {
+    throw new Error("choose one ingest source per run: --inbox or --buffer");
+  }
+
+  if (ask !== null) {
+    const report = runAsk(ask, storeFile);
+    const outFile = out ?? join(HELIX_ROOT, "traces", "ask.json");
+    writeTrace(report.trace, outFile);
+    console.log(`ask: "${report.question}" over ${report.storeNotes} remembered notes (${storeFile})`);
+    if (report.storeNotes === 0) {
+      console.log("  no memory yet — drop notes in the inbox and run an ingest first");
+    } else if (report.hits.length === 0) {
+      console.log("  no matches");
+    }
+    for (const h of report.hits.slice(0, 5)) {
+      console.log(`  ${h.note} — "${h.title}" (score ${h.score}; matched ${h.matched.join(", ")})`);
+      for (const t of h.triples.filter((t) => t.p !== "mentions")) {
+        console.log(`      (${t.s}, ${t.p}, ${t.o})`);
+      }
+      const kw = h.triples.filter((t) => t.p === "mentions").length;
+      if (kw > 0) console.log(`      + ${kw} body keywords indexed`);
+    }
+    console.log(`trace: ${outFile} (mneme.trace/v1, ${report.trace.events.length} events; read-only — no store.write, no permit needed)`);
+    console.log(`checks (untrusted TS mirrors, slice-local): ${checksOk(report.checks) ? "PASS" : "FAIL"}`);
+    if (!checksOk(report.checks)) process.exitCode = 1;
+    return;
+  }
+
+  let report: TrayReport;
+  let sourceLine: string;
+  if (buffer !== null) {
+    const { packets, skipped } = readBuffer(buffer);
+    report = drainPackets(packets, storeFile);
+    sourceLine = `tray: ${report.notes.length} packet(s) from buffer ${buffer}` +
+      (skipped > 0 ? ` (${skipped} non-packet line(s) skipped)` : "");
+  } else {
+    const inboxDir = inbox ?? join(HELIX_ROOT, "fixtures", "tray");
+    let inboxStat;
+    try {
+      inboxStat = statSync(inboxDir);
+    } catch {
+      throw new Error(`inbox not found: ${inboxDir}`);
+    }
+    if (!inboxStat.isDirectory()) throw new Error(`inbox is not a directory: ${inboxDir}`);
+    report = runTray(inboxDir, storeFile);
+    sourceLine = `tray: ${report.notes.length} notes from ${inboxDir}`;
+  }
+  const outFile = out ?? join(HELIX_ROOT, "traces", "tray.json");
+  writeTrace(report.trace, outFile);
+  if (!printDrainDigest(report, sourceLine, storeFile, outFile)) {
     console.error("tray: checks FAILED");
     process.exitCode = 1;
   }

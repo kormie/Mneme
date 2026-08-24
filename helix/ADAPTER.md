@@ -64,11 +64,15 @@ an install, ack, or mint ever appears.
 
 The listener only fills the L0 buffer; nothing becomes long-term memory
 until the operator says so. The hook never commits, the listener never
-commits — committing is a tray run over what the buffer holds:
+commits — committing is a tray run over what the buffer holds. The
+Monday-afternoon loop is listen (already running) plus one operator
+command ([DOGFOOD.md](DOGFOOD.md)):
 
 ```sh
 cd helix
-bun run tray --buffer ~/.mneme/buffer.ndjson
+bun run dogfood                            # buffer first, inbox fallback,
+                                           # then judge the emitted trace
+bun run tray --buffer ~/.mneme/buffer.ndjson   # or drain just the buffer
 ```
 
 The drain feeds the buffered packets through exactly the write path

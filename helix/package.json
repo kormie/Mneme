@@ -9,6 +9,7 @@
     "test:watch": "bun test --watch",
     "typecheck": "bunx tsc --noEmit",
     "tray": "bun src/tray.ts",
+    "dogfood": "bun src/tray.ts --dogfood",
     "listen": "bun src/listen.ts",
     "judge": "bun src/judge.ts"
   },
