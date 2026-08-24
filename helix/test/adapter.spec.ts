@@ -210,27 +210,8 @@ describe("a batch mixing channels", () => {
 });
 
 describe("the default buffer path", () => {
-  it("uses jsonl when neither file contains a valid packet", () => {
+  it("always resolves to buffer.jsonl", () => {
     const dir = tmp("buf-ext");
-    expect(defaultBufferFile(dir)).toBe(join(dir, "buffer.jsonl"));
-    writeFileSync(join(dir, "buffer.ndjson"), "\n");
-    expect(defaultBufferFile(dir)).toBe(join(dir, "buffer.jsonl"));
-  });
-
-  it("keeps a populated legacy buffer visible when jsonl has no valid packets", () => {
-    const dir = tmp("buf-legacy");
-    writeFileSync(join(dir, "buffer.jsonl"), "\nnot an Observation\n");
-    writeFileSync(join(dir, "buffer.ndjson"), JSON.stringify(fixturePacket()) + "\n");
-    expect(defaultBufferFile(dir)).toBe(join(dir, "buffer.ndjson"));
-  });
-
-  it("prefers jsonl when both filenames contain valid packets", () => {
-    const dir = tmp("buf-both");
-    writeFileSync(join(dir, "buffer.ndjson"), JSON.stringify(fixturePacket()) + "\n");
-    writeFileSync(
-      join(dir, "buffer.jsonl"),
-      JSON.stringify({ ...fixturePacket(), id: "cc-jsonl-new" }) + "\n",
-    );
     expect(defaultBufferFile(dir)).toBe(join(dir, "buffer.jsonl"));
   });
 });
