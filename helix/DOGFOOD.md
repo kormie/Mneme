@@ -37,7 +37,8 @@ started, one `core.permit` per commit.
   never the listener, never the hook, never a drain. A missing file is
   an empty Core; a file that is malformed or wrongly shaped aborts the
   run before any drain, because a constitution must never be silently
-  disabled. An empty constitution constrains nothing, so everything
+  disabled. One JSON caveat the loader cannot see: a duplicated key
+  keeps only its last occurrence, so never repeat a key in this file. An empty constitution constrains nothing, so everything
   that passed salience still commits, each write under its own
   `core.permit` — exactly the behaviour before the file existed.
   `values` is a closed enum of steward-named switches; the first and
@@ -213,11 +214,15 @@ refuses the Graft shape outright):
    `~/.mneme/core.json` and runs `human-utterance-only` when you name
    it: commits whose declared kind is not `note` or `user-prompt` are
    denied per item (`core.deny` + `core.interrupt` on the trace, the
-   drain continues), episodes and triples now carry that declared
-   `kind`, and entries from before `kind` existed read as unknown —
-   denied under the switch, passed under an empty Core. Safety and
-   liveness claims are unchanged: the same laws hold, the two liveness
-   gaps still must stay fail, and there is still no RuntimeCertificate.
+   drain continues), and episodes and triples now carry that declared
+   `kind`. A proposal missing its `kind` reads as unknown — refused
+   under the switch if it ever reaches the filter, passed under an
+   empty Core. The switch is prospective: it gates writes, not what
+   memory already holds, so entries committed before you flipped it
+   stay remembered and stay answerable through `--ask` until you
+   re-ingest or delete them. Safety and liveness claims are unchanged:
+   the same laws hold, the two liveness gaps still must stay fail, and
+   there is still no RuntimeCertificate.
 
 Next, in rank order:
 

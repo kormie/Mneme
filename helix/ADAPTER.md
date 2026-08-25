@@ -80,9 +80,11 @@ markdown notes take ([DOGFOOD.md](DOGFOOD.md)): pg-s2w re-screens every
 packet at the anomaly gate, then pg-w2l consolidates under Core — one
 `core.permit` consumed per `store.write`, with only the `audit.inbox`
 report permit-exempt. A packet that survives the gate reaches the store
-with its channel remembered, so `--ask` answers over claude-code
-observations and desk notes alike; a quarantined packet's id never
-appears among the trace's `store.write` keys.
+with its channel and declared kind remembered — unless the operator's
+Core denies the commit (a per-item `core.deny` + `core.interrupt`; see
+DOGFOOD.md's "The Core is a file you edit") — so `--ask` answers over
+claude-code observations and desk notes alike; a quarantined packet's
+id never appears among the trace's `store.write` keys.
 
 The packet `id` is the memory key. Delivery is at-least-once and the
 drain is idempotent: a re-delivered id in the buffer, or a re-run of the
