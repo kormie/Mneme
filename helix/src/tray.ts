@@ -240,8 +240,21 @@ export function trayAppliers(
         const verdict = requestPermit(item);
         if (verdict !== "pass") continue; // deny already flushed the permit
         ctx.emit({ type: "store.write", store: item.store, keys: [item.key] });
-        if (item.store === "episodic") store.episodic[item.key] = item.value as Episode;
-        else store.semantic[item.key] = item.value as Triple[];
+        if (item.store === "episodic") {
+          Object.defineProperty(store.episodic, item.key, {
+            value: item.value as Episode,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+        } else {
+          Object.defineProperty(store.semantic, item.key, {
+            value: item.value as Triple[],
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+        }
         written += 1;
       }
       return { ack: { rehearse: false, written } };
