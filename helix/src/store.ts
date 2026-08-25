@@ -35,8 +35,24 @@ export interface TrayStore {
   semantic: Record<string, Triple[]>;
 }
 
+/** A dictionary whose keys can be any packet id, including names exposed
+ * by Object.prototype. Copying through own keys also strips any prototype
+ * supplied by parsed JSON before the store becomes mutable. */
+function dictionary<T>(source?: Record<string, T>, keys?: readonly string[]): Record<string, T> {
+  const out = Object.create(null) as Record<string, T>;
+  if (source === undefined) return out;
+  for (const key of keys ?? Object.keys(source)) {
+    out[key] = source[key]!;
+  }
+  return out;
+}
+
 export function emptyStore(): TrayStore {
-  return { store: "mneme.tray-store/v1", episodic: {}, semantic: {} };
+  return {
+    store: "mneme.tray-store/v1",
+    episodic: dictionary<Episode>(),
+    semantic: dictionary<Triple[]>(),
+  };
 }
 
 export function loadStore(file: string): TrayStore {
@@ -58,19 +74,19 @@ export function loadStore(file: string): TrayStore {
   ) {
     throw new Error(`unrecognized tray store format in ${file}`);
   }
-  return parsed;
+  return {
+    store: parsed.store,
+    episodic: dictionary(parsed.episodic),
+    semantic: dictionary(parsed.semantic),
+  };
 }
 
 export function saveStore(file: string, store: TrayStore): void {
   mkdirSync(dirname(file), { recursive: true });
   const sorted: TrayStore = {
     store: store.store,
-    episodic: Object.fromEntries(
-      Object.keys(store.episodic).sort().map((k) => [k, store.episodic[k]!]),
-    ),
-    semantic: Object.fromEntries(
-      Object.keys(store.semantic).sort().map((k) => [k, store.semantic[k]!]),
-    ),
+    episodic: dictionary(store.episodic, Object.keys(store.episodic).sort()),
+    semantic: dictionary(store.semantic, Object.keys(store.semantic).sort()),
   };
   writeFileSync(file, JSON.stringify(sorted, null, 2) + "\n");
 }
