@@ -64,8 +64,16 @@ describe("kernel IR runtime validation", () => {
 
   it("leaves guard grammar to the scheduler", () => {
     const path = fixture("guard-grammar", (kernel) => {
-      Reflect.set(kernel.graphs[0]!.edges[0]!, "guard", "not scheduler grammar");
+      const edge = kernel.graphs
+        .find((graph) => graph.id === "pg-core")
+        ?.edges.find((candidate) => candidate.id === "c5");
+      if (edge === undefined) throw new Error("fixture requires pg-core control edge c5");
+      edge.guard = "not scheduler grammar";
     });
-    expect(loadKernel(path).graphs[0]!.edges[0]!.guard).toBe("not scheduler grammar");
+    const edge = loadKernel(path).graphs
+      .find((graph) => graph.id === "pg-core")
+      ?.edges.find((candidate) => candidate.id === "c5");
+    expect(edge?.kind).toBe("control");
+    expect(edge?.guard).toBe("not scheduler grammar");
   });
 });
