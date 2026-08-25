@@ -45,7 +45,12 @@ started, one `core.permit` per commit.
   only one implemented is `human-utterance-only`, which refuses any
   commit whose declared provenance kind is not `note` or `user-prompt`
   (defence in depth at Core, on top of the salience gate that already
-  keeps session chrome out of working memory). A denied write is a
+  keeps session chrome out of working memory). One honest limit: the
+  switch trusts the kind your adapters declared — the hook is the trust
+  anchor, and nothing re-verifies authorship at write time. Under
+  today's deterministic stand-ins that declaration survives the graph
+  faithfully; a sealed provenance channel is 0.11 work, due before any
+  model-backed extraction ships. A denied write is a
   per-item `core.deny` + `core.interrupt` on the trace — the rest of
   the drain continues — and a value the stand-in does not implement
   makes it throw rather than pretend to interpret a clause it cannot

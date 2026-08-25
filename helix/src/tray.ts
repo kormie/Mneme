@@ -120,7 +120,12 @@ const IMPLEMENTED_VALUES = ["human-utterance-only"] as const;
 
 /** The provenance kinds "human-utterance-only" admits: things the human
  * actually typed or dropped, discriminated on the declared kind field
- * only — never on packet text, never inferred from the channel. */
+ * only — never on packet text, never inferred from the channel. That
+ * declaration is adapter-attested, not verified: the hook is the trust
+ * anchor, and kind rides to this filter through prompt-owned triples
+ * that today's deterministic stand-ins copy honestly. A sealed
+ * provenance sidecar (0.11, steward-decided) will carry it outside
+ * prompt-owned data before any model-backed semantic node ships. */
 const HUMAN_UTTERANCE_KINDS = ["note", "user-prompt"] as const;
 
 /**
