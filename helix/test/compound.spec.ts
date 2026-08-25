@@ -7,8 +7,10 @@ import { loadKernel } from "../src/kernel.js";
 import type { Observation } from "../src/observation.js";
 import { emptyStore, loadStore, saveStore } from "../src/store.js";
 import { drainPackets, readBuffer, runAsk, runTray } from "../src/tray.js";
+import type { TraceEvent } from "../src/trace.js";
 
 const kernel = loadKernel();
+type StoreWrite = Extract<TraceEvent, { type: "store.write" }>;
 
 function tmp(name: string): string {
   return mkdtempSync(join(tmpdir(), `compound-${name}-`));
@@ -26,42 +28,94 @@ const HUMAN_UTTERANCE_ONLY: CoreFile = {
 
 describe("compound drain gates", () => {
   it("partitions quarantine, deferral, Core denial, and commits exactly once", () => {
-    // Assemble the credential-shaped text at runtime so the repository
-    // contains no plausible credential literal.
+    // Assemble the flagged text at runtime so the repository contains no
+    // plausible credential literal or customer hostname. The note trips two
+    // rules, which pins note-id deduplication independently of match count.
     const packets = [
-      packet("quarantined-note", "note", ["pass", "word"].join("") + " = example-value"),
+      packet(
+        "quarantined-note",
+        "note",
+        ["pass", "word"].join("") +
+          " = example-value\n" +
+          ["koho", ".", "com"].join(""),
+      ),
       packet("denied-result", "tool-result", "# Build output\n\nGenerated compiler details."),
       packet("committed-note", "note", "# Monday note\n\nRemember the release checklist."),
       packet("committed-prompt", "user-prompt", "Summarize the release checklist."),
       packet("deferred-note", "note", "# Later note\n\nReview after the current batch."),
     ];
+    const expected = {
+      quarantined: ["quarantined-note"],
+      deferred: ["deferred-note"],
+      denied: ["denied-result"],
+      committed: ["committed-note", "committed-prompt"],
+    };
 
     // Quarantine happens before the three-slot budget. Of the remaining
     // four packets, one is denied by Core, two commit, and one defers.
+    const storeFile = join(tmp("partition"), "store.json");
     const report = drainPackets(
       packets,
-      join(tmp("partition"), "store.json"),
+      storeFile,
       HUMAN_UTTERANCE_ONLY,
       kernel,
       3,
     );
     const partitions = {
-      quarantined: report.quarantined.map((match) => match.note),
+      quarantined: [...new Set(report.quarantined.map((match) => match.note))],
       deferred: report.deferred,
       denied: report.denied,
       committed: report.committed,
     };
 
-    expect(partitions).toEqual({
-      quarantined: ["quarantined-note"],
-      deferred: ["deferred-note"],
-      denied: ["denied-result"],
-      committed: ["committed-note", "committed-prompt"],
-    });
+    expect(report.quarantined.map((match) => match.rule).sort()).toEqual([
+      "credential-assignment",
+      "koho-host",
+    ]);
+    expect(partitions).toEqual(expected);
 
     const classified = Object.values(partitions).flat();
     expect(new Set(classified).size).toBe(classified.length);
     expect(classified.sort()).toEqual(packets.map((p) => p.id).sort());
+
+    // Independent partition oracle: do not trust TrayReport's classification
+    // arrays. What committed must agree exactly across persisted own keys and
+    // the trace's non-audit write keys; every other class must be absent.
+    const store = loadStore(storeFile);
+    const nonAuditWrites = report.trace.events.filter(
+      (event): event is StoreWrite =>
+        event.type === "store.write" && event.store !== "audit.inbox",
+    );
+    const expectedEpisodeKeys = expected.committed.map((id) => `ep:${id}`).sort();
+    const expectedSemanticKeys = [...expected.committed].sort();
+    const expectedWriteKeys = expected.committed
+      .flatMap((id) => [`episodic:ep:${id}`, `semantic:${id}`])
+      .sort();
+    const actualWriteKeys = nonAuditWrites
+      .flatMap((event) => event.keys.map((key) => `${event.store}:${key}`))
+      .sort();
+    const writeKeySet = new Set(actualWriteKeys);
+
+    expect(Object.keys(store.episodic).sort()).toEqual(expectedEpisodeKeys);
+    expect(Object.keys(store.semantic).sort()).toEqual(expectedSemanticKeys);
+    expect(actualWriteKeys).toEqual(expectedWriteKeys);
+
+    for (const id of expected.committed) {
+      expect(Object.hasOwn(store.episodic, `ep:${id}`)).toBe(true);
+      expect(Object.hasOwn(store.semantic, id)).toBe(true);
+      expect(writeKeySet).toContain(`episodic:ep:${id}`);
+      expect(writeKeySet).toContain(`semantic:${id}`);
+    }
+    for (const id of [
+      ...expected.quarantined,
+      ...expected.deferred,
+      ...expected.denied,
+    ]) {
+      expect(Object.hasOwn(store.episodic, `ep:${id}`)).toBe(false);
+      expect(Object.hasOwn(store.semantic, id)).toBe(false);
+      expect(writeKeySet).not.toContain(`episodic:ep:${id}`);
+      expect(writeKeySet).not.toContain(`semantic:${id}`);
+    }
     expect(Object.values(report.checks).every(Boolean)).toBe(true);
   });
 });
