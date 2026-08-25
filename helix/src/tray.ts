@@ -28,7 +28,6 @@ import { defaultBufferFile } from "./buffer-path.js";
 import {
   coreSnapshot,
   defaultCoreFile,
-  emptyCore,
   loadCore,
   type CoreFile,
 } from "./core.js";
@@ -141,14 +140,18 @@ function proposalKind(p: { store: string; value: Episode | Triple[] }): string |
  * emitted by appliers through ctx; routing stays the scheduler's alone.
  * `store` is the local memory the commit node persists into; `core` is
  * the loaded steward-owned Core file (read-only here — nothing in the
- * tray ever writes it, and its prose never leaves it). Exported so the
- * tests can run a single pg-core invocation against the stand-ins.
+ * tray ever writes it, and its prose never leaves it). `core` is
+ * deliberately required, here and on every exported entry point below:
+ * a caller that could omit it would silently drain with no
+ * constitution, the exact failure loadCore exists to refuse. Exported
+ * so the tests can run a single pg-core invocation against the
+ * stand-ins.
  */
 export function trayAppliers(
   kernel: KernelIR,
   emitter: Emitter,
   store: TrayStore,
-  core: CoreFile = emptyCore(),
+  core: CoreFile,
 ): Appliers {
   const coreStore = coreSnapshot(core);
 
@@ -403,7 +406,13 @@ export function trayAppliers(
       emitter,
     );
     const verdict = out.get("value-filter")?.verdict as { kind: string } | undefined;
-    return verdict?.kind ?? "no-verdict";
+    // A pg-core run that produced no verdict is not a deny — it is a
+    // broken invocation, and pretending otherwise would freeze writes
+    // while reporting them as constitutionally refused. Fail loud.
+    if (verdict === undefined) {
+      throw new Error("pg-core produced no ValueFilter verdict for a write proposal");
+    }
+    return verdict.kind;
   }
 
   return appliers;
@@ -433,9 +442,14 @@ export interface TrayReport {
   deferred: string[];
   committed: string[];
   /** Notes that reached the write path but whose commits Core refused
-   * (core.deny + core.interrupt, both items, nothing stored). */
+   * (core.deny + core.interrupt, both items — this drain wrote nothing
+   * for them; an entry an earlier drain committed, if any, remains
+   * until re-ingested or deleted). */
   denied: string[];
   episodes: Episode[];
+  /** Everything the semantic node extracted this drain — the worked
+   * candidates, denied notes' triples included. What persisted is what
+   * the trace's store.write keys name, nothing more. */
   triples: Triple[];
   auditFlags: number;
   trace: TraceFile;
@@ -556,9 +570,9 @@ export function dogfoodSource(bufferFile: string, inboxDir: string): DogfoodSour
 export function drainPackets(
   raw: Observation[],
   storeFile: string,
+  core: CoreFile,
   kernel: KernelIR = loadKernel(),
   maxSlots = 64,
-  core: CoreFile = emptyCore(),
 ): TrayReport {
   const store = loadStore(storeFile);
   const emitter = makeEmitter();
@@ -626,11 +640,11 @@ export function drainPackets(
 export function runTray(
   inboxDir: string,
   storeFile: string,
+  core: CoreFile,
   kernel: KernelIR = loadKernel(),
   maxSlots = 64,
-  core: CoreFile = emptyCore(),
 ): TrayReport {
-  return drainPackets(readInbox(inboxDir), storeFile, kernel, maxSlots, core);
+  return drainPackets(readInbox(inboxDir), storeFile, core, kernel, maxSlots);
 }
 
 export interface AskReport {
@@ -644,8 +658,8 @@ export interface AskReport {
 export function runAsk(
   question: string,
   storeFile: string,
+  core: CoreFile,
   kernel: KernelIR = loadKernel(),
-  core: CoreFile = emptyCore(),
 ): AskReport {
   const store = loadStore(storeFile);
   const episodic = Object.keys(store.episodic).sort().map((k) => store.episodic[k]!);
@@ -723,7 +737,9 @@ function printDrainDigest(
     );
   }
   if (report.denied.length > 0) {
-    console.log("denied by Core (constitution refused the commit; nothing stored):");
+    console.log(
+      "denied by Core (this drain wrote nothing for these; a previously committed version, if any, is still remembered):",
+    );
     for (const n of report.denied) console.log(`  x ${n}`);
   }
   console.log("committed:");
@@ -796,7 +812,7 @@ function runDogfood(
   }
 
   const kernel = loadKernel();
-  const report = drainPackets(src.packets, storeFile, kernel, 64, core);
+  const report = drainPackets(src.packets, storeFile, core, kernel);
   writeTrace(report.trace, outFile);
   const sourceLine = src.kind === "buffer"
     ? `dogfood: ${report.notes.length} packet(s) from buffer ${bufferFile}` +
@@ -892,6 +908,19 @@ function main(): void {
   // loading as empty and silently constraining nothing (src/core.ts).
   const corePath = coreArg ?? defaultCoreFile();
   const core = loadCore(corePath);
+  // The closed enum is checked at startup too, so a constitution this
+  // slice cannot honour refuses every mode — including --ask and a
+  // nothing-to-drain dogfood — not just the first write. The ValueFilter
+  // keeps its own identical throw as defence in depth.
+  const unknownValues = core.values.filter(
+    (v) => !(IMPLEMENTED_VALUES as readonly string[]).includes(v),
+  );
+  if (unknownValues.length > 0) {
+    throw new Error(
+      `${corePath}: cannot interpret core value(s): ${unknownValues.join(", ")} ` +
+        `(implemented: ${IMPLEMENTED_VALUES.join(", ")})`,
+    );
+  }
   const coreLine = core.values.length > 0
     ? `core: ${corePath} (values: ${core.values.join(", ")})`
     : `core: ${corePath} (empty — no constitution, every salient commit passes)`;
@@ -915,7 +944,7 @@ function main(): void {
   }
 
   if (ask !== null) {
-    const report = runAsk(ask, storeFile, loadKernel(), core);
+    const report = runAsk(ask, storeFile, core);
     const outFile = out ?? join(HELIX_ROOT, "traces", "ask.json");
     writeTrace(report.trace, outFile);
     console.log(`ask: "${report.question}" over ${report.storeNotes} remembered notes (${storeFile})`);
@@ -942,7 +971,7 @@ function main(): void {
   let sourceLine: string;
   if (buffer !== null) {
     const { packets, skipped } = readBuffer(buffer);
-    report = drainPackets(packets, storeFile, loadKernel(), 64, core);
+    report = drainPackets(packets, storeFile, core);
     sourceLine = `tray: ${report.notes.length} packet(s) from buffer ${buffer}` +
       (skipped > 0 ? ` (${skipped} non-packet line(s) skipped)` : "");
   } else {
@@ -954,7 +983,7 @@ function main(): void {
       throw new Error(`inbox not found: ${inboxDir}`);
     }
     if (!inboxStat.isDirectory()) throw new Error(`inbox is not a directory: ${inboxDir}`);
-    report = runTray(inboxDir, storeFile, loadKernel(), 64, core);
+    report = runTray(inboxDir, storeFile, core);
     sourceLine = `tray: ${report.notes.length} notes from ${inboxDir}`;
   }
   const outFile = out ?? join(HELIX_ROOT, "traces", "tray.json");

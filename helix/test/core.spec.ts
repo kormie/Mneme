@@ -20,7 +20,7 @@ import type { Observation } from "../src/observation.js";
 import { makeEmitter, runGraph } from "../src/scheduler.js";
 import { emptyStore, loadStore, type Episode, type Triple } from "../src/store.js";
 import { countType, denyImpliesInterrupt, type TraceFile } from "../src/trace.js";
-import { drainPackets, permitPairing, trayAppliers } from "../src/tray.js";
+import { drainPackets, permitPairing, runTray, scanInbox, trayAppliers } from "../src/tray.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HELIX_ROOT = resolve(HERE, "..");
@@ -110,9 +110,8 @@ describe("an empty Core keeps today's behaviour", () => {
         packet("zz-prompt", "user-prompt", "claude-code", "Refactor the loader."),
       ],
       storeFile,
-      kernel,
-      64,
       emptyCore(),
+      kernel,
     );
     expect(report.denied).toEqual([]);
     expect(report.committed).toEqual(["aa-paste", "note.md", "zz-prompt"]);
@@ -140,9 +139,8 @@ describe("human-utterance-only over a mixed drain", () => {
       packet("zz-prompt", "user-prompt", "claude-code", "Refactor the loader."),
     ],
     storeFile,
-    kernel,
-    64,
     HUO,
+    kernel,
   );
   const events = report.trace.events;
 
@@ -207,9 +205,8 @@ describe("human-utterance-only over a mixed drain", () => {
         packet("zz-prompt", "user-prompt", "claude-code", "Refactor the loader."),
       ],
       join(tmp("huo-again"), "store.json"),
-      kernel,
-      64,
       HUO,
+      kernel,
     );
     expect(again.trace).toEqual(report.trace);
   });
@@ -299,6 +296,23 @@ describe("the ValueFilter stand-in, one pg-core invocation at a time", () => {
   });
 });
 
+describe("the inbox source under human-utterance-only", () => {
+  it("scanInbox declares kind note, so dropped markdown commits under the switch", () => {
+    // Pins the kind: "note" constant in scanInbox — the sole link
+    // between the inbox source and the predicate's admit list. Without
+    // this, a regression there would silently deny every Monday note.
+    const inbox = tmp("huo-inbox");
+    writeFileSync(join(inbox, "monday.md"), "# Monday\n\n## Done\n\n- drained the buffer\n");
+    expect(scanInbox(inbox).map((p) => p.kind)).toEqual(["note"]);
+    const storeFile = join(tmp("huo-inbox-store"), "store.json");
+    const report = runTray(inbox, storeFile, HUO, kernel);
+    expect(report.committed).toEqual(["monday.md"]);
+    expect(report.denied).toEqual([]);
+    expect(loadStore(storeFile).episodic["ep:monday.md"]?.kind).toBe("note");
+    expect(Object.values(report.checks).every(Boolean)).toBe(true);
+  });
+});
+
 describe("an unknown Core value fails the drain closed", () => {
   it("throws before any store.write; the store file is never created", () => {
     const storeFile = join(tmp("unknown-value"), "store.json");
@@ -306,9 +320,8 @@ describe("an unknown Core value fails the drain closed", () => {
       drainPackets(
         [packet("note.md", "note", "file", "# Note\nhello")],
         storeFile,
-        kernel,
-        64,
         { values: ["not-a-real-predicate"], goals: [], prose: "" },
+        kernel,
       ),
     ).toThrow(/cannot interpret core value/);
     expect(existsSync(storeFile)).toBe(false);
@@ -383,6 +396,54 @@ describe("the CLI loads the Core before any drain", () => {
     expect(denyImpliesInterrupt(trace.events)).toBe(true);
     // The drain read the Core; it must never have written it.
     expect(readFileSync(coreFile, "utf8")).toBe(coreBytes);
+  });
+
+  it("--ask with a malformed Core aborts before any read", async () => {
+    const dir = tmp("cli-ask-bad");
+    const coreFile = join(dir, "core.json");
+    writeFileSync(coreFile, "{ not json");
+    const outFile = join(dir, "ask-trace.json");
+    let failed = false;
+    try {
+      await run("bun", [
+        TRAY, "--ask", "anything",
+        "--store", join(dir, "store.json"),
+        "--out", outFile,
+        "--core", coreFile,
+      ]);
+    } catch (err) {
+      failed = true;
+      expect((err as { stderr?: string }).stderr ?? "").toContain("core file");
+    }
+    expect(failed).toBe(true);
+    expect(existsSync(outFile)).toBe(false);
+  });
+
+  it("--ask with an unimplemented Core value fails closed at startup", async () => {
+    // The closed enum is checked when the CLI loads the Core, so a
+    // constitution this slice cannot honour refuses every mode — not
+    // just the first write on a drain.
+    const dir = tmp("cli-ask-unknown");
+    const coreFile = join(dir, "core.json");
+    writeFileSync(
+      coreFile,
+      JSON.stringify({ values: ["not-a-real-predicate"], goals: [], prose: "" }),
+    );
+    const outFile = join(dir, "ask-trace.json");
+    let failed = false;
+    try {
+      await run("bun", [
+        TRAY, "--ask", "anything",
+        "--store", join(dir, "store.json"),
+        "--out", outFile,
+        "--core", coreFile,
+      ]);
+    } catch (err) {
+      failed = true;
+      expect((err as { stderr?: string }).stderr ?? "").toContain("cannot interpret core value");
+    }
+    expect(failed).toBe(true);
+    expect(existsSync(outFile)).toBe(false);
   });
 });
 

@@ -17,8 +17,9 @@ export interface Episode {
   channel?: string;
   /** Provenance kind the packet declared ("note", "user-prompt", …).
    * Absent in stores written before kind was threaded through; read as
-   * unknown kind — which fails closed under a provenance clause and
-   * passes under an empty Core. Never defaulted. */
+   * unknown kind — refused if such an entry is ever proposed for
+   * writing under a provenance clause, passed under an empty Core.
+   * Already-committed entries are not re-audited. Never defaulted. */
   kind?: string;
 }
 
