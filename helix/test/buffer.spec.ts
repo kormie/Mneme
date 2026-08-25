@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "bun:test";
+import { emptyCore } from "../src/core.js";
 import { loadKernel } from "../src/kernel.js";
 import { isObservation, type Observation } from "../src/observation.js";
 import { loadStore } from "../src/store.js";
@@ -35,7 +36,7 @@ describe("the L0 sensory buffer drains into tray LTM", () => {
 
     const { packets, skipped } = readBuffer(bufferFile);
     expect(skipped).toBe(0);
-    const report = drainPackets(packets, storeFile, kernel);
+    const report = drainPackets(packets, storeFile, emptyCore(), kernel);
     const events = report.trace.events;
     expect(report.committed).toEqual([packet.id]);
     expect(Object.values(report.checks).every(Boolean)).toBe(true);
@@ -81,7 +82,7 @@ describe("the L0 sensory buffer drains into tray LTM", () => {
     const entries = (s: ReturnType<typeof loadStore>): number =>
       Object.keys(s.episodic).length + Object.keys(s.semantic).length;
     const before = entries(store);
-    drainPackets(readBuffer(bufferFile).packets, storeFile, kernel);
+    drainPackets(readBuffer(bufferFile).packets, storeFile, emptyCore(), kernel);
     const after = loadStore(storeFile);
     console.log(`store entries before re-drain: ${before}, after: ${entries(after)}`);
     expect(entries(after)).toBe(before);
@@ -100,7 +101,7 @@ describe("the L0 sensory buffer drains into tray LTM", () => {
     const { packets } = readBuffer(bufferFile);
     expect(packets).toHaveLength(1);
     const storeFile = join(tmp("redeliver-store"), "tray.json");
-    drainPackets(packets, storeFile, kernel);
+    drainPackets(packets, storeFile, emptyCore(), kernel);
     const store = loadStore(storeFile);
     expect(Object.keys(store.episodic)).toEqual([`ep:${packet.id}`]);
     expect(store.episodic[`ep:${packet.id}`]?.title).toBe(
@@ -123,7 +124,7 @@ describe("the L0 sensory buffer drains into tray LTM", () => {
       JSON.stringify(clean) + "\n" + JSON.stringify(leaky) + "\n",
     );
     const storeFile = join(tmp("leaky-store"), "tray.json");
-    const report = drainPackets(readBuffer(bufferFile).packets, storeFile, kernel);
+    const report = drainPackets(readBuffer(bufferFile).packets, storeFile, emptyCore(), kernel);
 
     expect(report.quarantined.map((q) => q.note)).toContain(leaky.id);
     expect(report.committed).toEqual([clean.id]);
@@ -151,7 +152,7 @@ describe("the L0 sensory buffer drains into tray LTM", () => {
       JSON.stringify(stop) + "\n" + JSON.stringify(prompt) + "\n",
     );
     const storeFile = join(tmp("stop-store"), "tray.json");
-    const report = drainPackets(readBuffer(bufferFile).packets, storeFile, kernel);
+    const report = drainPackets(readBuffer(bufferFile).packets, storeFile, emptyCore(), kernel);
 
     expect(report.committed).toEqual([prompt.id]);
     expect(report.quarantined).toEqual([]);
@@ -169,11 +170,11 @@ describe("the L0 sensory buffer drains into tray LTM", () => {
   it("answers a phrase from the drained packet via --ask, without writing", () => {
     const packet = fixturePacket();
     const storeFile = join(tmp("ask-store"), "tray.json");
-    drainPackets([packet], storeFile, kernel);
+    drainPackets([packet], storeFile, emptyCore(), kernel);
 
     // The fixture packet says "Refactor the tray fixture loader…"; a
     // lexical query over the store finds it — no model, no network.
-    const report = runAsk("fixture loader", storeFile, kernel);
+    const report = runAsk("fixture loader", storeFile, emptyCore(), kernel);
     console.log(
       `ask hit: ${report.hits[0]?.note} (matched ${report.hits[0]?.matched.join(", ")})`,
     );

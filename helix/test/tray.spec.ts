@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "bun:test";
+import { emptyCore } from "../src/core.js";
 import { loadKernel } from "../src/kernel.js";
 import { runAsk, runTray } from "../src/tray.js";
 import { loadStore } from "../src/store.js";
@@ -26,7 +27,7 @@ function tmp(name: string): string {
 
 describe("desk-tray ingest on the clean fixtures", () => {
   const storeFile = join(tmp("store"), "tray.json");
-  const report = runTray(FIXTURES, storeFile, kernel);
+  const report = runTray(FIXTURES, storeFile, emptyCore(), kernel);
   const events = report.trace.events;
 
   it("consumes the fixture notes with nothing quarantined", () => {
@@ -75,7 +76,7 @@ describe("desk-tray ingest on the clean fixtures", () => {
   });
 
   it("is deterministic across runs from the same starting store", () => {
-    const again = runTray(FIXTURES, join(tmp("det"), "tray.json"), kernel);
+    const again = runTray(FIXTURES, join(tmp("det"), "tray.json"), emptyCore(), kernel);
     expect(again.trace).toEqual(report.trace);
   });
 
@@ -91,19 +92,19 @@ describe("desk-tray ingest on the clean fixtures", () => {
 
 describe("persistence and retrieval", () => {
   const storeFile = join(tmp("mem"), "tray.json");
-  runTray(FIXTURES, storeFile, kernel);
+  runTray(FIXTURES, storeFile, emptyCore(), kernel);
 
   it("persists episodes and triples to the local store, idempotently", () => {
     const store = loadStore(storeFile);
     expect(Object.keys(store.episodic).sort()).toEqual(
       FIXTURE_NOTES.map((n) => `ep:${n}`).sort(),
     );
-    runTray(FIXTURES, storeFile, kernel); // re-ingest: replace, not duplicate
+    runTray(FIXTURES, storeFile, emptyCore(), kernel); // re-ingest: replace, not duplicate
     expect(loadStore(storeFile)).toEqual(store);
   });
 
   it("answers a question over the store via the declared read path", () => {
-    const report = runAsk("what did I write about Jordan?", storeFile, kernel);
+    const report = runAsk("what did I write about Jordan?", storeFile, emptyCore(), kernel);
     expect(report.storeNotes).toBe(FIXTURE_NOTES.length);
     expect(report.hits[0]?.note).toBe("follow-up.md");
     expect(report.hits[0]?.matched).toContain("jordan");
@@ -119,14 +120,14 @@ describe("persistence and retrieval", () => {
   });
 
   it("ranks heading matches and stays deterministic", () => {
-    const a = runAsk("blockers", storeFile, kernel);
+    const a = runAsk("blockers", storeFile, emptyCore(), kernel);
     expect(a.hits[0]?.note).toBe("standup.md");
-    expect(runAsk("blockers", storeFile, kernel).trace).toEqual(a.trace);
+    expect(runAsk("blockers", storeFile, emptyCore(), kernel).trace).toEqual(a.trace);
   });
 
   it("finds body prose via the capped keyword triples", () => {
-    expect(runAsk("runbook", storeFile, kernel).hits[0]?.note).toBe("ci-failure.md");
-    expect(runAsk("consume-once permits", storeFile, kernel).hits[0]?.note).toBe("standup.md");
+    expect(runAsk("runbook", storeFile, emptyCore(), kernel).hits[0]?.note).toBe("ci-failure.md");
+    expect(runAsk("consume-once permits", storeFile, emptyCore(), kernel).hits[0]?.note).toBe("standup.md");
   });
 
   it("folds accents so plain-ASCII queries find French notes", () => {
@@ -136,14 +137,14 @@ describe("persistence and retrieval", () => {
       "# Réunion d'équipe\n\n## Décisions\n\n- prochaine étape lundi matin\n",
     );
     const sf = join(tmp("frstore"), "tray.json");
-    runTray(inbox, sf, kernel);
-    expect(runAsk("equipe", sf, kernel).hits[0]?.note).toBe("reunion.md");
-    expect(runAsk("Décisions", sf, kernel).hits[0]?.note).toBe("reunion.md");
-    expect(runAsk("etape", sf, kernel).hits[0]?.note).toBe("reunion.md");
+    runTray(inbox, sf, emptyCore(), kernel);
+    expect(runAsk("equipe", sf, emptyCore(), kernel).hits[0]?.note).toBe("reunion.md");
+    expect(runAsk("Décisions", sf, emptyCore(), kernel).hits[0]?.note).toBe("reunion.md");
+    expect(runAsk("etape", sf, emptyCore(), kernel).hits[0]?.note).toBe("reunion.md");
   });
 
   it("answers gracefully over an empty store", () => {
-    const report = runAsk("anything", join(tmp("empty"), "none.json"), kernel);
+    const report = runAsk("anything", join(tmp("empty"), "none.json"), emptyCore(), kernel);
     expect(report.storeNotes).toBe(0);
     expect(report.hits).toEqual([]);
     expect(Object.values(report.checks).every(Boolean)).toBe(true);
@@ -152,14 +153,14 @@ describe("persistence and retrieval", () => {
   it("refuses a corrupt store instead of silently wiping memory", () => {
     const file = join(tmp("corrupt"), "tray.json");
     writeFileSync(file, "{ not json");
-    expect(() => runTray(FIXTURES, file, kernel)).toThrow();
+    expect(() => runTray(FIXTURES, file, emptyCore(), kernel)).toThrow();
     writeFileSync(file, JSON.stringify({ store: "something-else" }));
-    expect(() => runTray(FIXTURES, file, kernel)).toThrow(/unrecognized/);
+    expect(() => runTray(FIXTURES, file, emptyCore(), kernel)).toThrow(/unrecognized/);
     expect(readFileSync(file, "utf8")).toContain("something-else"); // untouched
   });
 
   it("defers notes past the working-memory budget instead of dropping them silently", () => {
-    const report = runTray(FIXTURES, join(tmp("budget"), "tray.json"), kernel, 2);
+    const report = runTray(FIXTURES, join(tmp("budget"), "tray.json"), emptyCore(), kernel, 2);
     expect(report.committed).toEqual(FIXTURE_NOTES.slice(0, 2));
     expect(report.deferred).toEqual(FIXTURE_NOTES.slice(2));
     expect(Object.values(report.checks).every(Boolean)).toBe(true);
@@ -179,7 +180,7 @@ describe("quarantine gate", () => {
       `# Deploy note\n\nkey id ${AWS_EXAMPLE} appeared in the CI log.\n${CRED_LINE}\n`,
     );
     const storeFile = join(tmp("qstore"), "tray.json");
-    const report = runTray(inbox, storeFile, kernel);
+    const report = runTray(inbox, storeFile, emptyCore(), kernel);
 
     expect(report.notes).toEqual(["leaky.md", "standup.md"]);
     expect(report.quarantined.map((q) => q.note)).toContain("leaky.md");
@@ -199,7 +200,7 @@ describe("quarantine gate", () => {
   });
 
   it("does not fire e4 when the inbox is clean", () => {
-    const report = runTray(FIXTURES, join(tmp("clean"), "tray.json"), kernel);
+    const report = runTray(FIXTURES, join(tmp("clean"), "tray.json"), emptyCore(), kernel);
     expect(
       report.trace.events.some((e) => e.type === "edge.fire" && e.edge === "e4"),
     ).toBe(false);

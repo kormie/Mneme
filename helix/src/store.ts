@@ -15,6 +15,12 @@ export interface Episode {
   /** Adapter channel that observed it ("file" for dropped notes). Absent
    * in stores written before live channels existed; read as "file". */
   channel?: string;
+  /** Provenance kind the packet declared ("note", "user-prompt", …).
+   * Absent in stores written before kind was threaded through; read as
+   * unknown kind — refused if such an entry is ever proposed for
+   * writing under a provenance clause, passed under an empty Core.
+   * Already-committed entries are not re-audited. Never defaulted. */
+  kind?: string;
 }
 
 export interface Triple {

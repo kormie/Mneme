@@ -56,11 +56,15 @@ one permit-gated write path `bun run dogfood` runs.
    bun run dogfood
    ```
 
-   This resolves the source itself (buffer first, inbox fallback to
-   `~/mneme-tray`), drains it through the permit-gated write path (one
-   `core.permit` per `store.write`, only `audit.inbox` exempt), writes the
-   store and `helix/traces/dogfood.json`, and runs the untrusted judge over
-   that trace.
+   This first loads the operator's Core file (`~/.mneme/core.json`;
+   missing means an empty Core, malformed or unimplemented values abort
+   before any drain), then resolves the source itself (buffer first,
+   inbox fallback to `~/mneme-tray`), drains it through the
+   permit-gated write path (one `core.permit` per `store.write`, only
+   `audit.inbox` exempt; commits the Core denies are refused per item
+   and reported in the digest), writes the store and
+   `helix/traces/dogfood.json`, and runs the untrusted judge over that
+   trace.
 
 4. **Surface the judge summary to the user.** Report, from the command's
    output:
@@ -72,8 +76,10 @@ one permit-gated write path `bun run dogfood` runs.
      Kormie (@kormie): *Useful? Creepy? Missing Core clause?*
    - Exit code: `0` means the drain (or an explicit "nothing to drain" when
      both buffer and inbox were empty) and the judged safety laws held;
-     `1` means a safety fail — report this as a regression, not something
-     to silently retry.
+     `1` is either a refused constitution (stderr names the core file or
+     an uninterpretable core value — fix `~/.mneme/core.json` and rerun)
+     or a safety fail — report a safety fail as a regression, not
+     something to silently retry.
 
 Do not invent events, do not edit the trace, and do not treat "judge
 fail=0" as a certificate (ADR-008) — it is empirical, not proof.
