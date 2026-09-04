@@ -33,6 +33,7 @@ export function isObservation(v: unknown): v is Observation {
   return (
     typeof o.id === "string" && o.id.length > 0 &&
     typeof o.t === "number" && Number.isFinite(o.t) &&
+    Number.isFinite(new Date(o.t).getTime()) &&
     typeof o.channel === "string" &&
     (CHANNELS as readonly string[]).includes(o.channel) &&
     typeof o.kind === "string" && o.kind.length > 0 &&

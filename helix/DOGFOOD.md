@@ -178,6 +178,8 @@ bun run tray --buffer ~/.mneme/buffer.jsonl
 # later, from memory:
 bun run tray --ask "what did I write about Jordan?"
 bun run tray --ask "CI flake"
+bun run tray --ask "what happened last week?" --as-of 2026-09-07
+bun run tray --ask "what did I write about deployment last week?" --as-of 2026-09-07
 ```
 
 Ask mode runs the declared pg-w2l read path (`query → hybrid → rerank →
@@ -189,6 +191,25 @@ heading, or the first line when a note has none), headings, and a capped
 bag of its body keywords — accent-folded, so "reunion" finds "réunion".
 The store holds those tokens, never the prose itself. `--store` points
 both modes at a different memory file if you want separate trays.
+
+Relative dates are explicit deterministic inputs: `last week` requires
+`--as-of YYYY-MM-DD` and means the previous UTC calendar week, Monday
+00:00 inclusive through the next Monday 00:00 exclusive. Thus
+`--as-of 2026-09-07` selects observation times in
+`[2026-08-31T00:00:00Z, 2026-09-07T00:00:00Z)`. Helix never consults the
+wall clock for a relative query. Pure temporal questions return every
+dated record in the interval; adding topic words also requires the
+existing accent-folded lexical match. Results sort by lexical score,
+then newest observation time, then source-note id.
+
+The displayed date is **observation time**, not the date of an event in
+the note and not a claimed authorship time. Adapter-buffer packets carry
+the adapter's clock reading; markdown inbox notes use file modification
+time. Fixture mtimes therefore form part of deterministic test input.
+Helix does not infer dates from prose. Stores written before observation
+time was persisted remain readable without migration: their undated
+records participate in ordinary lexical retrieval but are reported and
+excluded from time-bounded results. Ask mode never rewrites the store.
 
 ## Roadmap and known debt
 
@@ -231,9 +252,10 @@ refuses the Graft shape outright):
 
 Next, in rank order:
 
-7. **Better retrieval.** Body keywords are indexed now; still open:
-   multi-note synthesis, phrase queries, and a date-aware "what happened
-   last week" — all deterministic, all within the declared graph.
+7. ✅ **Date-aware retrieval.** Observation time now survives both ingest
+   channels and the declared write/read graph. Explicit-UTC `last week`
+   queries return source notes and stored facts without fabricating a
+   narrative. Still open: multi-note synthesis and phrase queries.
 8. **Steward-gated proposals only.** Richer structural edges live in the
    frozen `structural` transform, and this whole domain belongs to the
    `agora` twin eventually — both go to Kormie as graph diffs, not code.

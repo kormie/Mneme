@@ -37,6 +37,7 @@ import { makeEmitter, runGraph, type Appliers, type Emitter } from "./scheduler.
 import { type AnomalyFlag, type AnomalyMatch } from "./anomaly.js";
 import { parseObservation, type Observation } from "./observation.js";
 import { sensoryAppliers, type SensedObs } from "./sensory.js";
+import { temporalQuery, type ObservationInterval } from "./temporal-query.js";
 import {
   loadStore,
   saveStore,
@@ -73,6 +74,7 @@ export interface Hit {
   score: number;
   matched: string[];
   triples: Triple[];
+  observationTimeMs?: number;
 }
 
 /** Accent-folded (NFKD, marks stripped) so "réunion" matches "reunion". */
@@ -89,11 +91,21 @@ const STOPWORDS = new Set([
   "what", "when", "where", "which", "who", "whom", "why", "how", "did", "does",
   "do", "the", "and", "for", "with", "about", "was", "were", "are", "you",
   "your", "have", "has", "had", "this", "that", "note", "notes", "write",
-  "wrote", "written", "say", "said", "last", "week",
+  "wrote", "written", "say", "said", "happened", "last", "week",
 ]);
 
 function queryTokens(text: string): string[] {
   return tokens(text).filter((t) => !STOPWORDS.has(t));
+}
+
+/** Store files are user-visible JSON and legacy/malformed fields must not
+ * become invented dates. Only values representable by JavaScript's Date are
+ * observation times; everything else remains unknown. */
+function validObservationTime(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) &&
+      Number.isFinite(new Date(value).getTime())
+    ? value
+    : undefined;
 }
 
 /**
@@ -178,6 +190,7 @@ export function trayAppliers(
         headings: obs.headings,
         channel: obs.channel,
         kind: obs.kind,
+        observationTimeMs: obs.t,
         text: obs.text,
       }));
       return { episodes };
@@ -198,6 +211,9 @@ export function trayAppliers(
         // a missing kind stays missing (unknown), because inventing one
         // would let a provenance clause pass on made-up provenance.
         ...(ep.kind === undefined ? [] : [{ s: ep.note, p: "kind", o: ep.kind }]),
+        ...(ep.observationTimeMs === undefined
+          ? []
+          : [{ s: ep.note, p: "observation-time-ms", o: String(ep.observationTimeMs) }]),
         ...ep.headings.map((h) => ({ s: ep.note, p: "heading", o: h })),
         ...bodyKeywords(ep.text ?? "").map((o) => ({ s: ep.note, p: "mentions", o })),
       ]);
@@ -218,6 +234,11 @@ export function trayAppliers(
       const items: WriteItem[] = [...byNote.keys()].sort().flatMap((note): WriteItem[] => {
         const ts = byNote.get(note)!;
         const kind = ts.find((t) => t.p === "kind")?.o;
+        const observationTimeText = ts.find((t) => t.p === "observation-time-ms")?.o;
+        const observationTimeMs = observationTimeText === undefined
+          ? undefined
+          : Number(observationTimeText);
+        const normalizedObservationTimeMs = validObservationTime(observationTimeMs);
         const episode: Episode = {
           id: `ep:${note}`,
           note,
@@ -226,6 +247,9 @@ export function trayAppliers(
           channel: ts.find((t) => t.p === "channel")?.o ?? "file",
           // No kind triple, no kind field: unknown stays unknown.
           ...(kind === undefined ? {} : { kind }),
+          ...(normalizedObservationTimeMs === undefined
+            ? {}
+            : { observationTimeMs: normalizedObservationTimeMs }),
         };
         return [
           { store: "episodic", key: episode.id, value: episode },
@@ -267,11 +291,18 @@ export function trayAppliers(
 
     // --- pg-w2l read path: question → hits over the local store ------
     "pg-w2l/query": (inputs) => {
-      const slots = inputs.slots as { text: string }[];
-      return { query: { tokens: queryTokens(slots.map((s) => s.text).join(" ")), indexes: ["episodic", "semantic"] } };
+      const slots = inputs.slots as { text: string; asOf?: string }[];
+      const text = slots.map((s) => s.text).join(" ");
+      return {
+        query: {
+          tokens: queryTokens(text),
+          temporal: temporalQuery(text, slots[0]?.asOf),
+          indexes: ["episodic", "semantic"],
+        },
+      };
     },
     "pg-w2l/hybrid": (inputs, ctx) => {
-      const query = inputs.query as { tokens: string[] };
+      const query = inputs.query as { tokens: string[]; temporal: { interval?: ObservationInterval } };
       const episodic = inputs.episodic as Episode[];
       const semantic = inputs.semantic as Triple[];
       ctx.emit({ type: "store.read", store: "episodic", keys: episodic.map((e) => e.id) });
@@ -283,10 +314,31 @@ export function trayAppliers(
             [ep.note, ep.title, ...ep.headings, ...ts.map((t) => t.o)].join(" "),
           );
           const matched = query.tokens.filter((q) => haystack.includes(q));
-          return { note: ep.note, title: ep.title, score: matched.length, matched, triples: ts };
+          const observationTimeMs = validObservationTime(ep.observationTimeMs);
+          return {
+            note: ep.note,
+            title: ep.title,
+            score: matched.length,
+            matched,
+            triples: ts,
+            ...(observationTimeMs === undefined ? {} : { observationTimeMs }),
+          };
         })
-        .filter((h) => h.score > 0)
-        .sort((a, b) => b.score - a.score || (a.note < b.note ? -1 : 1));
+        .filter((h) => {
+          const interval = query.temporal.interval;
+          if (interval !== undefined) {
+            if (h.observationTimeMs === undefined) return false;
+            if (h.observationTimeMs < interval.startMs || h.observationTimeMs >= interval.endMs) return false;
+          }
+          return query.tokens.length === 0 ? interval !== undefined : h.score > 0;
+        })
+        .sort((a, b) =>
+          b.score - a.score ||
+          (query.temporal.interval === undefined
+            ? 0
+            : (b.observationTimeMs ?? 0) - (a.observationTimeMs ?? 0)) ||
+          (a.note < b.note ? -1 : a.note > b.note ? 1 : 0)
+        );
       return { hits };
     },
     // Offline stand-in: hybrid's order is already deterministic; a real
@@ -671,6 +723,8 @@ export interface AskReport {
   storeNotes: number;
   trace: TraceFile;
   checks: Checks;
+  observationInterval?: ObservationInterval;
+  undatedExcluded: number;
 }
 
 export function runAsk(
@@ -678,6 +732,7 @@ export function runAsk(
   storeFile: string,
   core: CoreFile,
   kernel: KernelIR = loadKernel(),
+  asOf?: string,
 ): AskReport {
   const store = loadStore(storeFile);
   const episodic = Object.keys(store.episodic).sort().map((k) => store.episodic[k]!);
@@ -689,7 +744,7 @@ export function runAsk(
     kernel,
     "pg-w2l",
     {
-      slots: [{ id: "slot:ask", text: question }],
+      slots: [{ id: "slot:ask", text: question, ...(asOf === undefined ? {} : { asOf }) }],
       identity: coreSnapshot(core),
       episodic,
       semantic,
@@ -700,6 +755,7 @@ export function runAsk(
     emitter,
   );
   const injected = out.get("inject")?.slots as { items: Hit[] } | undefined;
+  const parsedTemporal = temporalQuery(question, asOf);
 
   const trace = makeTraceFile(kernel.spec, emitter.events);
   return {
@@ -708,6 +764,10 @@ export function runAsk(
     storeNotes: episodic.length,
     trace,
     checks: runChecks(kernel, trace),
+    ...(parsedTemporal.interval === undefined ? {} : { observationInterval: parsedTemporal.interval }),
+    undatedExcluded: parsedTemporal.interval === undefined
+      ? 0
+      : episodic.filter((ep) => validObservationTime(ep.observationTimeMs) === undefined).length,
   };
 }
 
@@ -899,6 +959,7 @@ function main(): void {
   let storeFile = join(HELIX_ROOT, "store", "tray.json");
   let ask: string | null = null;
   let coreArg: string | null = null;
+  let asOf: string | null = null;
   let dogfood = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i] as string;
@@ -906,7 +967,7 @@ function main(): void {
       dogfood = true;
     } else if (
       flag === "--inbox" || flag === "--buffer" || flag === "--out" ||
-      flag === "--store" || flag === "--ask" || flag === "--core"
+      flag === "--store" || flag === "--ask" || flag === "--core" || flag === "--as-of"
     ) {
       const value = args[++i];
       if (value === undefined) throw new Error(`missing value for ${flag}`);
@@ -915,6 +976,7 @@ function main(): void {
       else if (flag === "--out") out = resolve(value);
       else if (flag === "--store") storeFile = resolve(value);
       else if (flag === "--core") coreArg = resolve(value);
+      else if (flag === "--as-of") asOf = value;
       else ask = value;
     } else {
       throw new Error(`unknown argument: ${flag}`);
@@ -960,24 +1022,51 @@ function main(): void {
   if (inbox !== null && buffer !== null) {
     throw new Error("choose one ingest source per run: --inbox or --buffer");
   }
+  if (asOf !== null && ask === null) {
+    throw new Error("--as-of is only valid with --ask");
+  }
 
   if (ask !== null) {
-    const report = runAsk(ask, storeFile, core);
+    const report = runAsk(ask, storeFile, core, loadKernel(), asOf ?? undefined);
     const outFile = out ?? join(HELIX_ROOT, "traces", "ask.json");
     writeTrace(report.trace, outFile);
     console.log(`ask: "${report.question}" over ${report.storeNotes} remembered notes (${storeFile})`);
+    if (report.observationInterval !== undefined) {
+      console.log(
+        `  observation time: [${report.observationInterval.start}, ${report.observationInterval.end}) ` +
+        `(previous UTC calendar week; as-of ${asOf})`,
+      );
+      if (report.undatedExcluded > 0) {
+        console.log(`  ${report.undatedExcluded} undated legacy record(s) excluded from this time-bounded result`);
+      }
+    }
     if (report.storeNotes === 0) {
       console.log("  no memory yet — drop notes in the inbox and run an ingest first");
     } else if (report.hits.length === 0) {
       console.log("  no matches");
     }
     for (const h of report.hits.slice(0, 5)) {
-      console.log(`  ${h.note} — "${h.title}" (score ${h.score}; matched ${h.matched.join(", ")})`);
+      const basis = h.matched.length > 0
+        ? `score ${h.score}; matched ${h.matched.join(", ")}`
+        : "observation time in interval";
+      console.log(`  ${h.note} — "${h.title}" (${basis})`);
+      if (h.observationTimeMs !== undefined) {
+        console.log(`      observed by adapter: ${new Date(h.observationTimeMs).toISOString()}`);
+      }
       for (const t of h.triples.filter((t) => t.p !== "mentions")) {
         console.log(`      (${t.s}, ${t.p}, ${t.o})`);
       }
-      const kw = h.triples.filter((t) => t.p === "mentions").length;
-      if (kw > 0) console.log(`      + ${kw} body keywords indexed`);
+      for (const t of h.triples.filter(
+        (t) => t.p === "mentions" && h.matched.includes(fold(t.o)),
+      )) {
+        console.log(`      (${t.s}, ${t.p}, ${t.o})`);
+      }
+      if (h.matched.length === 0) {
+        const keywords = h.triples.filter((t) => t.p === "mentions").map((t) => t.o);
+        if (keywords.length > 0) {
+          console.log(`      stored body keywords (not prose): ${keywords.join(", ")}`);
+        }
+      }
     }
     console.log(`trace: ${outFile} (mneme.trace/v1, ${report.trace.events.length} events; read-only — no store.write, no permit needed)`);
     console.log(`checks (untrusted TS mirrors, slice-local): ${checksOk(report.checks) ? "PASS" : "FAIL"}`);
