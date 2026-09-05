@@ -5,7 +5,7 @@
  * the three dogfood prompts. These tests drive the real CLI.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,9 +52,12 @@ describe("--dogfood over a fixture buffer", () => {
   // a non-zero exit, so reaching the assertions is itself the exit-0 check.
   // --core points at a missing file: an absent Core is an empty Core, the
   // documented default behaviour (and keeps the test hermetic against any
-  // real ~/.mneme/core.json on the machine running it).
+  // real ~/.mneme/core.json on the machine running it). --spool likewise
+  // points at a missing directory: the sweep would otherwise consume a
+  // real ~/.mneme/spool on the machine running the tests.
   const result = run("bun", [
     TRAY, "--dogfood",
+    "--spool", join(dir, "no-spool"),
     "--buffer", bufferFile,
     "--inbox", join(dir, "no-inbox"),
     "--store", storeFile,
@@ -132,6 +135,7 @@ describe("--dogfood over a buffer mixing session-stop and user-prompt", () => {
     const outFile = join(dir, "trace.json");
     const { stdout } = await run("bun", [
       TRAY, "--dogfood",
+      "--spool", join(dir, "no-spool"),
       "--buffer", bufferFile,
       "--inbox", join(dir, "no-inbox"),
       "--store", storeFile,
@@ -166,6 +170,7 @@ describe("--dogfood source resolution", () => {
     writeFileSync(join(inbox, "monday.md"), "# Monday\n\n## Done\n\n- drained the buffer\n");
     const { stdout } = await run("bun", [
       TRAY, "--dogfood",
+      "--spool", join(dir, "no-spool"),
       "--buffer", join(dir, "no-buffer.jsonl"),
       "--inbox", inbox,
       "--store", storeFile,
@@ -193,6 +198,7 @@ describe("--dogfood source resolution", () => {
     const outFile = join(dir, "trace.json");
     const { stdout } = await run("bun", [
       TRAY, "--dogfood",
+      "--spool", join(dir, "no-spool"),
       "--buffer", bufferFile,
       "--inbox", join(dir, "no-inbox"),
       "--store", storeFile,
@@ -206,6 +212,99 @@ describe("--dogfood source resolution", () => {
       kind: "nothing",
       skipped: 0,
     });
+  });
+});
+
+describe("--dogfood sweeps the hook's spool first (no listener needed)", () => {
+  it("consumes spooled packets through pg-s2w into the buffer, then drains them", async () => {
+    const dir = tmp("sweep");
+    const spool = join(dir, "spool");
+    const bufferFile = join(dir, "buffer.jsonl");
+    const storeFile = join(dir, "store.json");
+    const outFile = join(dir, "trace.json");
+    const packet = { ...fixturePacket(), id: "cc-spooled-0001" };
+    mkdirSync(spool, { recursive: true });
+    // Exactly what hook.mjs writes when no listener answers its socket.
+    writeFileSync(join(spool, `${packet.id}.json`), JSON.stringify(packet) + "\n");
+    const { stdout } = await run("bun", [
+      TRAY, "--dogfood",
+      "--spool", spool,
+      "--buffer", bufferFile,
+      "--inbox", join(dir, "no-inbox"),
+      "--store", storeFile,
+      "--out", outFile,
+      "--core", join(dir, "no-core.json"),
+    ]);
+    expect(stdout).toContain("sweep: 1 spooled packet(s)");
+    expect(stdout).toContain("1 appended to buffer");
+    expect(stdout).toContain("from buffer");
+    expect(stdout).toContain("safety: PASS");
+    // The spool file was consumed; the buffer now holds the packet verbatim,
+    // as a running listener would have left it.
+    expect(readdirSync(spool)).toEqual([]);
+    const lines = readFileSync(bufferFile, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] as string)).toEqual(packet);
+    // And it was drained under its own permits, same as any buffered packet.
+    const store = loadStore(storeFile);
+    expect(Object.keys(store.episodic)).toEqual([`ep:${packet.id}`]);
+    const trace = JSON.parse(readFileSync(outFile, "utf8")) as TraceFile;
+    // One trace for the whole command: the sweep's pg-s2w pass plus the
+    // drain's own pg-s2w re-screen, both on declared nodes.
+    const sensoryEnters = trace.events.filter(
+      (e) => e.type === "node.enter" && e.graph === "pg-s2w" && e.node === "sensor-normalize",
+    );
+    expect(sensoryEnters).toHaveLength(2);
+    const pairs = permitPairing(trace.events);
+    expect(pairs).toHaveLength(2);
+    for (const p of pairs) expect(p.permitIndex).toBeGreaterThanOrEqual(0);
+    expect(judge(kernel, trace.events).traceSafetyFails).toEqual([]);
+  });
+
+  it("drops a quarantined spooled packet without buffering it, and drains nothing", async () => {
+    const dir = tmp("sweep-quarantine");
+    const spool = join(dir, "spool");
+    const bufferFile = join(dir, "buffer.jsonl");
+    const storeFile = join(dir, "store.json");
+    const outFile = join(dir, "trace.json");
+    const leaky: Observation = {
+      ...fixturePacket(),
+      id: "cc-spooled-leaky",
+      text: "set AWS_SECRET_ACCESS_KEY=abc123 in the deploy env",
+    };
+    mkdirSync(spool, { recursive: true });
+    writeFileSync(join(spool, `${leaky.id}.json`), JSON.stringify(leaky) + "\n");
+    const { stdout } = await run("bun", [
+      TRAY, "--dogfood",
+      "--spool", spool,
+      "--buffer", bufferFile,
+      "--inbox", join(dir, "no-inbox"),
+      "--store", storeFile,
+      "--out", outFile,
+      "--core", join(dir, "no-core.json"),
+    ]);
+    expect(stdout).toContain("0 appended to buffer");
+    expect(stdout).toContain(`! ${leaky.id}: credential-assignment`);
+    expect(stdout).toContain("nothing to drain");
+    expect(readdirSync(spool)).toEqual([]); // consumed, never kept
+    expect(existsSync(bufferFile)).toBe(false); // never buffered
+    expect(existsSync(storeFile)).toBe(false); // no invented write
+    // The sweep did schedule pg-s2w, so its sensory-only trace is written.
+    const trace = JSON.parse(readFileSync(outFile, "utf8")) as TraceFile;
+    expect(trace.events.some((e) => e.type === "store.write")).toBe(false);
+    expect(trace.events.some((e) => e.type === "core.permit")).toBe(false);
+    expect(trace.events.some((e) => e.type === "edge.fire" && e.edge === "e4")).toBe(true);
+    expect(JSON.stringify(trace)).not.toContain("abc123");
+  });
+
+  it("refuses --spool outside --dogfood", async () => {
+    const dir = tmp("spool-flag");
+    await expect(run("bun", [
+      TRAY, "--ask", "anything",
+      "--spool", join(dir, "spool"),
+      "--store", join(dir, "store.json"),
+      "--core", join(dir, "no-core.json"),
+    ])).rejects.toMatchObject({ code: 1 });
   });
 });
 

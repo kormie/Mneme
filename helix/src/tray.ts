@@ -20,11 +20,11 @@
  * honour. An empty Core constrains nothing — every commit passes, one
  * core.permit per store.write, exactly as before a constitution existed.
  */
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { basename, dirname, join, resolve } from "node:path";
-import { defaultBufferFile } from "./buffer-path.js";
+import { defaultBufferFile, defaultSpoolDir } from "./buffer-path.js";
 import {
   coreSnapshot,
   defaultCoreFile,
@@ -33,11 +33,13 @@ import {
 } from "./core.js";
 import { judge, type Judgement } from "./judge.js";
 import { loadKernel, type KernelIR } from "./kernel.js";
+import { drainSpool, processBatch } from "./listen.js";
 import { makeEmitter, runGraph, type Appliers, type Emitter } from "./scheduler.js";
 import { type AnomalyFlag, type AnomalyMatch } from "./anomaly.js";
 import { parseObservation, type Observation } from "./observation.js";
 import { sensoryAppliers, type SensedObs } from "./sensory.js";
 import { temporalQuery, type ObservationInterval } from "./temporal-query.js";
+import { writeTrace } from "./trace-io.js";
 import {
   loadStore,
   saveStore,
@@ -57,6 +59,11 @@ import {
   type TraceEvent,
   type TraceFile,
 } from "./trace.js";
+
+// Re-exported for callers that learned it here (tests, the listener's
+// former import); the definition moved to trace-io.ts to break the
+// tray ↔ listener import cycle.
+export { writeTrace };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HELIX_ROOT = resolve(HERE, "..");
@@ -636,7 +643,9 @@ export function dogfoodSource(bufferFile: string, inboxDir: string): DogfoodSour
  * Drain one batch of Observation packets into long-term memory: pg-s2w
  * (anomaly gate included) → pg-w2l (one core.permit per store.write) →
  * pg-audit. Both ingest sources — the markdown inbox and the sensory
- * buffer — end up here, so there is exactly one write path.
+ * buffer — end up here, so there is exactly one write path. A caller
+ * may hand in an emitter that already holds events (the dogfood spool
+ * sweep does), so one operator command yields one trace file.
  */
 export function drainPackets(
   raw: Observation[],
@@ -644,9 +653,9 @@ export function drainPackets(
   core: CoreFile,
   kernel: KernelIR = loadKernel(),
   maxSlots = 64,
+  emitter: Emitter = makeEmitter(),
 ): TrayReport {
   const store = loadStore(storeFile);
-  const emitter = makeEmitter();
   const appliers = trayAppliers(kernel, emitter, store, core);
   const identity = coreSnapshot(core);
 
@@ -773,11 +782,6 @@ export function runAsk(
   };
 }
 
-export function writeTrace(trace: TraceFile, outFile: string): void {
-  mkdirSync(dirname(outFile), { recursive: true });
-  writeFileSync(outFile, JSON.stringify(trace, null, 2) + "\n");
-}
-
 function checksOk(checks: Checks): boolean {
   return Object.values(checks).every(Boolean);
 }
@@ -864,15 +868,65 @@ function livenessRows(j: Judgement): { id: string; lean: string; status: string 
   return j.rows.filter((r) => r.liveness).map((r) => ({ id: r.id, lean: r.lean, status: r.status }));
 }
 
+export interface SweepReport {
+  /** Spooled packet ids the sweep consumed (files deleted). */
+  spooled: string[];
+  /** Ids appended to the buffer (everything the gate did not quarantine). */
+  accepted: string[];
+  quarantined: AnomalyMatch[];
+}
+
 /**
- * The Monday-afternoon operator command (DOGFOOD.md): resolve the source
- * (buffer, else inbox), drain it through the one permit-gated write
- * path, judge the emitted trace with the untrusted judge, and print the
- * three dogfood prompts. Returns the process exit code: 0 when the
- * drain's checks and the judge's safety laws hold (the two liveness
- * gaps must stay red — a green one means a stuffed trace); 1 otherwise.
+ * Sweep the hook's spool into the L0 buffer: the listener's own `--once`
+ * pass, run here so the daily loop needs no daemon. The hook spools a
+ * packet whenever no listener answers its socket; each spooled packet
+ * rides pg-s2w (anomaly gate included) exactly as the listener would
+ * run it — under the Core-free sensory identity, since the sensory
+ * boundary never loads the Core — and the clean ones are appended to
+ * the buffer the drain then reads and re-screens under the loaded Core.
+ * A quarantined version is dropped: never buffered, never logged
+ * verbatim. Nothing here commits; the sweep only fills L0. An absent or
+ * empty spool is an ordinary state (no packets), not an error.
+ */
+export function sweepSpool(
+  kernel: KernelIR,
+  spoolDir: string,
+  bufferFile: string,
+  emitter: Emitter,
+  maxSlots = 64,
+): SweepReport {
+  const spooled = drainSpool(spoolDir);
+  if (spooled.length === 0) return { spooled: [], accepted: [], quarantined: [] };
+  const batch = processBatch(kernel, spooled, emitter, bufferFile, maxSlots);
+  return {
+    spooled: spooled.map((p) => p.id),
+    accepted: batch.accepted,
+    quarantined: batch.quarantined,
+  };
+}
+
+function printSweep(sweep: SweepReport, spoolDir: string, bufferFile: string): void {
+  if (sweep.spooled.length === 0) return;
+  console.log(
+    `sweep: ${sweep.spooled.length} spooled packet(s) from ${spoolDir} → ` +
+      `${sweep.accepted.length} appended to buffer ${bufferFile} (no listener needed)`,
+  );
+  for (const q of sweep.quarantined) {
+    console.log(`  ! ${q.note}: ${q.rule} (dropped — never buffered)`);
+  }
+}
+
+/**
+ * The Monday-afternoon operator command (DOGFOOD.md): sweep the hook's
+ * spool into the buffer, resolve the source (buffer, else inbox), drain
+ * it through the one permit-gated write path, judge the emitted trace
+ * with the untrusted judge, and print the three dogfood prompts. Returns
+ * the process exit code: 0 when the drain's checks and the judge's
+ * safety laws hold (the two liveness gaps must stay red — a green one
+ * means a stuffed trace); 1 otherwise.
  */
 function runDogfood(
+  spoolDir: string,
   bufferFile: string,
   inboxDir: string,
   storeFile: string,
@@ -880,19 +934,30 @@ function runDogfood(
   core: CoreFile,
   coreLine: string,
 ): number {
+  const kernel = loadKernel();
+  const emitter = makeEmitter();
+  const sweep = sweepSpool(kernel, spoolDir, bufferFile, emitter);
   const src = dogfoodSource(bufferFile, inboxDir);
   console.log(coreLine);
+  printSweep(sweep, spoolDir, bufferFile);
   if (src.kind === "nothing") {
     console.log("dogfood: nothing to drain");
     console.log(`  buffer ${bufferFile}: absent or no packets` +
       (src.skipped > 0 ? ` (${src.skipped} non-packet line(s) ignored)` : ""));
     console.log(`  inbox ${inboxDir}: absent or no .md notes`);
-    console.log("nothing was written: no store.write, no trace, no invented memory");
+    if (sweep.spooled.length > 0) {
+      // The sweep scheduled pg-s2w, so its sensory-only trace is written
+      // even though nothing reached the write path.
+      writeTrace(makeTraceFile(kernel.spec, emitter.events), outFile);
+      console.log(`nothing was written to memory: no store.write, no invented memory`);
+      console.log(`trace: ${outFile} (mneme.trace/v1, sweep only — ${emitter.events.length} sensory events)`);
+    } else {
+      console.log("nothing was written: no store.write, no trace, no invented memory");
+    }
     return 0;
   }
 
-  const kernel = loadKernel();
-  const report = drainPackets(src.packets, storeFile, core, kernel);
+  const report = drainPackets(src.packets, storeFile, core, kernel, 64, emitter);
   writeTrace(report.trace, outFile);
   const sourceLine = src.kind === "buffer"
     ? `dogfood: ${report.notes.length} packet(s) from buffer ${bufferFile}` +
@@ -957,6 +1022,7 @@ function main(): void {
   const args = process.argv.slice(2);
   let inbox: string | null = null;
   let buffer: string | null = null;
+  let spool: string | null = null;
   let out: string | null = null;
   let storeFile = join(HELIX_ROOT, "store", "tray.json");
   let ask: string | null = null;
@@ -968,13 +1034,14 @@ function main(): void {
     if (flag === "--dogfood") {
       dogfood = true;
     } else if (
-      flag === "--inbox" || flag === "--buffer" || flag === "--out" ||
+      flag === "--inbox" || flag === "--buffer" || flag === "--spool" || flag === "--out" ||
       flag === "--store" || flag === "--ask" || flag === "--core" || flag === "--as-of"
     ) {
       const value = args[++i];
       if (value === undefined) throw new Error(`missing value for ${flag}`);
       if (flag === "--inbox") inbox = resolve(value);
       else if (flag === "--buffer") buffer = resolve(value);
+      else if (flag === "--spool") spool = resolve(value);
       else if (flag === "--out") out = resolve(value);
       else if (flag === "--store") storeFile = resolve(value);
       else if (flag === "--core") coreArg = resolve(value);
@@ -1010,10 +1077,12 @@ function main(): void {
   if (dogfood) {
     if (ask !== null) throw new Error("choose one mode per run: --dogfood or --ask");
     if (asOf !== null) throw new Error("--as-of is only valid with --ask");
-    // With --dogfood, --buffer and --inbox merely relocate the documented
-    // defaults; source preference (buffer first) stays the same.
+    // With --dogfood, --spool, --buffer and --inbox merely relocate the
+    // documented defaults; source preference (buffer first) stays the same.
+    const mnemeHome = join(homedir(), ".mneme");
     process.exitCode = runDogfood(
-      buffer ?? defaultBufferFile(join(homedir(), ".mneme")),
+      spool ?? defaultSpoolDir(mnemeHome),
+      buffer ?? defaultBufferFile(mnemeHome),
       inbox ?? join(homedir(), "mneme-tray"),
       storeFile,
       out ?? join(HELIX_ROOT, "traces", "dogfood.json"),
@@ -1021,6 +1090,9 @@ function main(): void {
       coreLine,
     );
     return;
+  }
+  if (spool !== null) {
+    throw new Error("--spool is only valid with --dogfood (the single-source drains read one file)");
   }
   if (inbox !== null && buffer !== null) {
     throw new Error("choose one ingest source per run: --inbox or --buffer");

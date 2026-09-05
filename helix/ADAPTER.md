@@ -4,10 +4,13 @@ Adapters are how the world reaches MNEME's sensory layer (brief §6: L0
 stores = adapters, buffer, tools). An adapter observes one channel and
 pushes **Observation packets**; the listener (`src/listen.ts`) accepts
 them, feeds each batch to pg-s2w's declared ingress `raw`, and appends
-the clean packets to a local sensory buffer file. That is the whole
-loop. Nothing here commits long-term memory, and nothing here reads
-anything back out — committing what the buffer holds is a separate,
-operator-initiated tray drain (see "Draining the buffer into memory").
+the clean packets to a local sensory buffer file. When no listener is
+running, the adapter spools the packet instead and the operator's
+`bun run dogfood` runs that same pg-s2w pass over the spool before it
+drains (see "Draining the buffer into memory"). That is the whole loop.
+Nothing here commits long-term memory, and nothing here reads anything
+back out — committing what the buffer holds is a separate,
+operator-initiated tray drain.
 
 This ships one real adapter — Claude Code hooks — plus the `file`
 channel the desk tray already uses ([DOGFOOD.md](DOGFOOD.md)).
@@ -37,7 +40,7 @@ The packet is the concrete shape this slice gives the kernel's opaque
 `RawPacket` type on pg-s2w's ingress. It is a projection of the IR, not
 an extension: the loader still mirrors `spec/kernel.json` verbatim.
 
-## Starting the listener
+## Starting the listener (optional)
 
 ```sh
 cd helix
@@ -52,6 +55,13 @@ packets to `~/.mneme/buffer.jsonl`, and writes a `mneme.trace/v1` to
 `--spool`, `--buffer`, `--out`, `--max-slots`, and `--once` (drain the
 spool one time, write the trace, and exit — useful without a daemon).
 
+The listener is optional. With no listener up, the hook spools every
+packet, and `bun run dogfood` sweeps the spool through the identical
+pg-s2w pass into the same buffer before it drains — so the daily loop
+needs nothing long-running. Run the listener when you want packets
+buffered as they arrive (and `helix/traces/listen.json` written per
+batch) rather than at the next dogfood run.
+
 Every batch is one pg-s2w invocation: normalize → salience → anomaly →
 gate → bind, with the same deterministic secrets quarantine as the tray
 (`src/anomaly.ts`). A quarantined packet version is dropped entirely —
@@ -62,17 +72,19 @@ an install, ack, or mint ever appears.
 
 ## Draining the buffer into memory
 
-The listener only fills the L0 buffer; nothing becomes long-term memory
-until the operator says so. The hook never commits, the listener never
+The listener (or the dogfood sweep standing in for it) only fills the
+L0 buffer; nothing becomes long-term memory until the operator says so.
+The hook never commits, the listener never commits, the sweep never
 commits — committing is a tray run over what the buffer holds. The
-Monday-afternoon loop is listen (already running) plus one operator
-command ([DOGFOOD.md](DOGFOOD.md)):
+Monday-afternoon loop is the hook plus one operator command
+([DOGFOOD.md](DOGFOOD.md)):
 
 ```sh
 cd helix
-bun run dogfood                            # buffer first, inbox fallback,
-                                           # then judge the emitted trace
+bun run dogfood                            # sweep the spool, buffer first,
+                                           # inbox fallback, then judge
 bun run tray --buffer ~/.mneme/buffer.jsonl   # or drain just the buffer
+                                              # (no sweep)
 ```
 
 The drain feeds the buffered packets through exactly the write path
@@ -140,7 +152,8 @@ identity check on the exact prompt text (trimmed), not prose parsing,
 and no further strings join that check without the steward. The
 hook writes the packet to the socket and exits 0; if the socket is down
 it spools the packet as one JSON file under `~/.mneme/spool` and still
-exits 0 — the listener drains the spool when it is next up. A hook must
+exits 0 — the listener drains the spool when it is next up, or `bun run
+dogfood` sweeps it at the next run. A hook must
 never break the tool it observes, so every failure path exits 0, and it
 prints nothing to stdout (on `UserPromptSubmit`, hook stdout would be
 injected into the model's context). Environment overrides: `MNEME_SOCK`

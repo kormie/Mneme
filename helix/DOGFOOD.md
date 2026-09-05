@@ -16,8 +16,11 @@ product feature and touches no KOHO system.
 
 Notes you drop by hand are the `file` channel. Live channels — Claude
 Code sessions today — arrive through the sensory adapter loop instead
-([ADAPTER.md](ADAPTER.md)): the listener fills an L0 buffer file, and
-`--buffer` drains that buffer through the very same write path as the
+([ADAPTER.md](ADAPTER.md)): the hook delivers each packet to the
+listener when one is running, and spools it to a directory when none
+is; the listener fills an L0 buffer file, and `bun run dogfood` sweeps
+the spool into that same buffer itself, so no daemon is required.
+`--buffer` drains the buffer through the very same write path as the
 inbox. Either way, nothing becomes memory except by a tray run you
 started, one `core.permit` per commit.
 
@@ -126,31 +129,43 @@ artifact of record (ADR-008).
 
 ## Daily use: the Monday-afternoon loop
 
-The whole loop is two pieces: **listen** (already running, filling the
-L0 buffer — [ADAPTER.md](ADAPTER.md)) plus **one operator command**:
+The whole loop is two pieces: the **Claude Code hook** (installed once,
+[ADAPTER.md](ADAPTER.md)) plus **one operator command**:
 
 ```sh
 bun run dogfood                  # equivalent: bun src/tray.ts --dogfood
 ```
 
+No daemon is required. When no listener answers the hook's socket, the
+hook spools each packet as one JSON file under `~/.mneme/spool`, and
+`bun run dogfood` starts by sweeping that spool through pg-s2w into
+`~/.mneme/buffer.jsonl` — the listener's own `--once` pass, run for you,
+with the same secrets quarantine (a flagged packet is dropped, never
+buffered). If you do keep `bun run listen` running, the hook delivers to
+it directly and the sweep simply finds an empty spool; both paths end in
+the same buffer, so nothing is counted twice.
+
 One run, no flags: it loads your Core file first (`~/.mneme/core.json`;
 missing means an empty Core, malformed aborts before any drain) and
-prints which constitution applied; reads `~/.mneme/buffer.jsonl` if the
-buffer holds packets, else falls back to the documented inbox default
-`~/mneme-tray` (markdown notes you dropped by hand); drains whichever
-it found through
+prints which constitution applied; sweeps the spool as above; reads
+`~/.mneme/buffer.jsonl` if the buffer holds packets, else falls back to
+the documented inbox default `~/mneme-tray` (markdown notes you dropped
+by hand); drains whichever it found through
 the one permit-gated write path (one `core.permit` consumed per
 `store.write`, only the `audit.inbox` report permit-exempt); writes the
-store and a `mneme.trace/v1` to `helix/traces/dogfood.json`; runs the
+store and a `mneme.trace/v1` to `helix/traces/dogfood.json` — one trace
+for the whole command, the sweep's sensory events included; runs the
 untrusted judge over that trace and prints the safety verdict alongside
 the two liveness gaps (`HasClusterCut`, `HasArchiveSample`), which must
 stay **fail** — this slice never runs pg-adl or pg-dem and stuffs no
 events; and finishes with the three feedback prompts below. Exit 0 when
 the drain and the judged safety laws hold; exit 1 on any safety fail.
-When buffer and inbox are both empty it prints "nothing to drain" and
-exits 0 — no write is invented for an uneventful Monday. The hook still
-never commits, and retrieve-on-submit is still absent; nothing becomes
-memory except by this command, run by you.
+When spool, buffer and inbox are all empty it prints "nothing to drain"
+and exits 0 — no write is invented for an uneventful Monday (a sweep
+that quarantined everything still writes its sensory-only trace, so the
+quarantine is on the record). The hook still never commits, and
+retrieve-on-submit is still absent; nothing becomes memory except by
+this command, run by you.
 
 What the drain commits is what you observed, never the session's own
 chrome. A Claude Code `session-stop` packet is sensory punctuation: the
@@ -161,9 +176,11 @@ triple. The harness's injected `<task-notification>` turns are task
 chrome, not user prompts: the hook never observes them at all
 ([ADAPTER.md](ADAPTER.md)).
 
-`--buffer`, `--inbox`, `--store`, `--out`, and `--core` relocate those
-defaults when you keep your tray (or your constitution) elsewhere. The
-single-source drains remain for when you want just one side:
+`--spool`, `--buffer`, `--inbox`, `--store`, `--out`, and `--core`
+relocate those defaults when you keep your tray (or your constitution)
+elsewhere. The single-source drains remain for when you want just one
+side (they read one file and never sweep, so `--spool` is refused
+outside `--dogfood`):
 
 ```sh
 # during the day: standups, PR review notes, CI post-mortems,
@@ -265,11 +282,16 @@ refuses the Graft shape outright):
    time now survives both ingest channels and the declared write/read
    graph. Queries return source notes and stored facts without fabricating
    a narrative. Other relative periods remain unsupported.
+8. ✅ **No daemon required.** `bun run dogfood` sweeps the hook's spool
+   through pg-s2w into the buffer before draining — the listener's
+   `--once` pass, run by the one operator command — so the loop is the
+   hook plus that command. The listener stays available for anyone who
+   wants packets buffered live.
 
 Next, in rank order:
 
-8. **Better retrieval.** Multi-note synthesis and phrase queries remain.
-9. **Steward-gated proposals only.** Richer structural edges live in the
+9. **Better retrieval.** Multi-note synthesis and phrase queries remain.
+10. **Steward-gated proposals only.** Richer structural edges live in the
    frozen `structural` transform, and this whole domain belongs to the
    `agora` twin eventually — both go to Kormie as graph diffs, not code.
 

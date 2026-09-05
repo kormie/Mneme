@@ -24,13 +24,13 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
-import { defaultBufferFile } from "./buffer-path.js";
+import { defaultBufferFile, defaultSpoolDir } from "./buffer-path.js";
 import { loadKernel, type KernelIR } from "./kernel.js";
 import { makeEmitter, runGraph, type Emitter } from "./scheduler.js";
 import type { AnomalyFlag, AnomalyMatch } from "./anomaly.js";
 import { parseObservation, type Observation } from "./observation.js";
 import { sensoryAppliers, type SensedObs } from "./sensory.js";
-import { writeTrace } from "./tray.js";
+import { writeTrace } from "./trace-io.js";
 import { countType, makeTraceFile, scheduleNonempty, validTrace } from "./trace.js";
 
 export interface SenseResult {
@@ -40,7 +40,11 @@ export interface SenseResult {
   flag: AnomalyFlag | null;
 }
 
-/** One pg-s2w invocation over a batch of packets (ingress `raw`). */
+/** One pg-s2w invocation over a batch of packets (ingress `raw`). The
+ * sensory boundary is Core-free: this senses under the hardcoded empty
+ * identity and never loads the Core file — the tray's spool sweep
+ * reuses this exact pass, and the drain re-screens under the loaded
+ * Core afterwards. */
 export function senseBatch(
   kernel: KernelIR,
   packets: Observation[],
@@ -164,7 +168,7 @@ function defaults(): ListenOptions {
   const base = join(homedir(), ".mneme");
   return {
     sockPath: join(base, "helix.sock"),
-    spoolDir: join(base, "spool"),
+    spoolDir: defaultSpoolDir(base),
     bufferFile: defaultBufferFile(base),
     traceFile: join(HELIX_ROOT, "traces", "listen.json"),
     maxSlots: 64,
