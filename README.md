@@ -41,6 +41,34 @@ markdown notes; it runs the kernel graphs over them and emits a
 `mneme.trace/v1` you can read. Setup, scope fences, and the three feedback
 prompts live in [helix/DOGFOOD.md](helix/DOGFOOD.md).
 
+## Why the name
+
+*Mneme* (Greek Μνήμη, *mnēmē*) means memory or remembrance. It is the root
+of *mnemonic*, *amnesia*, and *Mnemosyne*. In the oldest Greek tradition,
+recorded by Pausanias, Mneme was one of the three original Muses of Mount
+Helicon alongside Melete (practice) and Aoide (song): the Muse of memory,
+the faculty that let a poet carry an epic before there was writing to keep
+it in.
+
+That is the whole pitch of this repo. MNEME is a memory system before it is
+anything else: four layers, transitions between them, and a Core the human
+owns. A few more things line up:
+
+- **Retained, not merely stored.** *Mnēmē* names what stays with you, closer
+  to a lasting impression than to a filing cabinet. The layered model, with
+  transitions that promote and age material between layers, reads the same
+  way.
+- **The Muse, not the Titan.** Mnemosyne is the cosmic mother of the nine
+  Muses; Mneme is the smaller, human-scale figure. That fits a *personal*
+  memory system rather than a universal one.
+- **Trace as memory.** In 1904 the biologist Richard Semon borrowed *Mneme*
+  for his theory of memory traces, coining *engram* in the same book. The
+  definition of done here is a real emitted `mneme.trace/v1` inhabiting
+  `Mneme.RuntimeCertificate`, so the trace-as-memory lineage is baked into
+  the word's modern history too.
+
+It is also short, and commonly anglicized as "NEE-mee".
+
 ## Map
 
 | Path | What |
