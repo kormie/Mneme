@@ -24,15 +24,17 @@ Run every command from `helix/` (`cd helix && bun install` once).
 2. **Bootstrap from the checked-in agent notes** when memory is empty:
 
    ```sh
-   bun run tray --buffer fixtures/agent-notes/helix-2026-09-05.jsonl
+   for f in fixtures/agent-notes/*.jsonl; do bun run tray --buffer "$f"; done
    ```
 
    Those are real findings earlier sessions recorded about this
-   codebase (pinned tests, shared constants, decisions and their
-   reasons, what the steward pushed back on), drained through the
-   ordinary write path under whatever Core is present. Under an empty
-   Core they commit; under `human-utterance-only` they are refused, and
-   that refusal is the operator's decision, not an error to work around.
+   codebase — pinned tests, shared constants, decisions and their
+   reasons, what the steward pushed back on, what a review taught, the
+   steward's direction — one dated file per session, drained through
+   the ordinary write path under whatever Core is present (drains are
+   idempotent, so re-running is harmless). Under an empty Core they
+   commit; under `human-utterance-only` they are refused, and that
+   refusal is the operator's decision, not an error to work around.
 
 3. **Ask before you touch.** For every area the task names, ask memory
    with the words you would grep for:

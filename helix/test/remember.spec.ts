@@ -22,7 +22,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const HELIX_ROOT = resolve(HERE, "..");
 const REMEMBER = join(HELIX_ROOT, "src", "remember.ts");
 const TRAY = join(HELIX_ROOT, "src", "tray.ts");
-const SEED = join(HELIX_ROOT, "fixtures", "agent-notes", "helix-2026-09-05.jsonl");
+const SEEDS = join(HELIX_ROOT, "fixtures", "agent-notes");
 const run = promisify(execFile);
 
 function tmp(name: string): string {
@@ -169,24 +169,33 @@ describe("bun run remember", () => {
   });
 });
 
-describe("the seed of tonight's findings", () => {
-  it("is a clean buffer of agent notes that drains under an empty Core and answers questions", async () => {
+describe("the checked-in seeds of earlier sessions' findings", () => {
+  it("are clean buffers of agent notes with unique ids that drain under an empty Core and answer questions", async () => {
     const dir = tmp("seed");
-    const lines = readFileSync(SEED, "utf8").trim().split("\n");
-    expect(lines.length).toBeGreaterThanOrEqual(10);
-    for (const line of lines) {
-      const p = JSON.parse(line) as { kind: string; channel: string; text: string };
-      expect(isObservation(p)).toBe(true);
-      expect(p.kind).toBe(AGENT_NOTE_KIND);
-      expect(p.channel).toBe("claude-code");
-      expect(p.text.split("\n")[0]?.length).toBeLessThanOrEqual(120);
+    const files = readdirSync(SEEDS).filter((f) => f.endsWith(".jsonl")).sort();
+    expect(files.length).toBeGreaterThanOrEqual(3);
+    const ids = new Set<string>();
+    let total = 0;
+    for (const file of files) {
+      const lines = readFileSync(join(SEEDS, file), "utf8").trim().split("\n");
+      for (const line of lines) {
+        const p = JSON.parse(line) as { id: string; kind: string; channel: string; text: string };
+        expect(isObservation(p)).toBe(true);
+        expect(p.kind).toBe(AGENT_NOTE_KIND);
+        expect(p.channel).toBe("claude-code");
+        expect(p.text.split("\n")[0]?.length).toBeLessThanOrEqual(120);
+        expect(ids.has(p.id), `duplicate id ${p.id}`).toBe(false);
+        ids.add(p.id);
+      }
+      const { stdout } = await run("bun", [
+        TRAY, "--buffer", join(SEEDS, file), "--store", join(dir, "store.json"), "--out", join(dir, "t.json"),
+        "--core", join(dir, "no-core.json"),
+      ]);
+      expect(stdout).toContain("secret scan: no rules matched");
+      expect(stdout).toContain(`committed: ${lines.length} (${lines.length} new, 0 replaced, 0 unchanged)`);
+      total += lines.length;
     }
-    const { stdout } = await run("bun", [
-      TRAY, "--buffer", SEED, "--store", join(dir, "store.json"), "--out", join(dir, "t.json"),
-      "--core", join(dir, "no-core.json"),
-    ]);
-    expect(stdout).toContain("secret scan: no rules matched");
-    expect(stdout).toContain(`committed: ${lines.length} (${lines.length} new, 0 replaced, 0 unchanged)`);
+    expect(Object.keys(loadStore(join(dir, "store.json")).episodic)).toHaveLength(total);
     const ask = await run("bun", [
       TRAY, "--ask", "STOPWORDS", "--store", join(dir, "store.json"), "--core", join(dir, "no-core.json"),
       "--out", join(dir, "a.json"),
