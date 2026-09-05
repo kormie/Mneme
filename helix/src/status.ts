@@ -128,10 +128,17 @@ export function printStatus(
       (s.store.undated > 0 ? `; ${s.store.undated} undated` : ""),
   );
   console.log(`  listener socket ${paths.sockPath}: ${s.socketPresent ? "present (not probed)" : "absent — the hook spools, dogfood sweeps"}`);
-  const waiting = s.spool.waiting + pending.reduce((n, [k, c]) => (k === "session-stop" ? n : n + c), 0) + s.inbox.notes;
-  console.log(
-    waiting > 0
-      ? `  next: bun run dogfood (${s.spool.waiting} spooled + ${s.inbox.notes} inbox note(s) + un-remembered buffer packets to drain)`
-      : "  next: nothing waiting; bun run ask \"…\" to read memory",
-  );
+  // Only the spool and the inbox are known to hold work a drain will
+  // commit; an un-remembered buffer packet may be one the Core refuses
+  // again, so it never turns into a standing "drain now".
+  const unremembered = pending.reduce((n, [k, c]) => (k === "session-stop" ? n : n + c), 0);
+  if (s.spool.waiting + s.inbox.notes > 0) {
+    console.log(`  next: bun run dogfood (${s.spool.waiting} spooled + ${s.inbox.notes} inbox note(s) to drain)`);
+  } else if (unremembered > 0) {
+    console.log(
+      `  next: nothing new is waiting; a re-drain commits any of the ${unremembered} un-remembered buffer packet(s) the Core admits (denials are refused again)`,
+    );
+  } else {
+    console.log("  next: nothing waiting; bun run ask \"…\" to read memory");
+  }
 }

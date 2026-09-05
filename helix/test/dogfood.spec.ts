@@ -232,7 +232,7 @@ describe("--dogfood drains a backlog past the working-memory budget", () => {
 });
 
 describe("--dogfood source resolution", () => {
-  it("falls back to the inbox when the buffer is absent, exit 0", async () => {
+  it("drains the inbox when the buffer is absent, exit 0", async () => {
     const dir = tmp("inbox");
     const inbox = join(dir, "mneme-tray");
     const storeFile = join(dir, "store.json");

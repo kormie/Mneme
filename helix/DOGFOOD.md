@@ -83,6 +83,31 @@ started, one `core.permit` per commit.
   it only means no rule matched, so keep customer data and production
   secrets out of your notes regardless.
 
+## Agent notes: remembering on purpose
+
+An agent working in this repo (or you, at a terminal) can record one
+observation deliberately:
+
+```sh
+bun run remember "First line is the title, at most 120 characters
+Then why, the file, and the test that pins it."
+```
+
+That spools one Observation packet with declared provenance —
+`channel: claude-code`, `kind: agent-note` — exactly as the hook spools
+when no listener is up, and stops: it writes no store, runs no graph,
+reads nothing back. The note enters memory only on the next
+`bun run dogfood`, through the secrets gate and one `core.permit` per
+write, and a `human-utterance-only` Core refuses it with a per-item
+`core.deny` by design. Agents author candidates; your Core decides.
+`helix/fixtures/agent-notes/` holds dated files of such notes about this
+codebase that earlier sessions recorded; a fresh clone drains one with
+`bun run tray --buffer fixtures/agent-notes/<file>.jsonl` and can then
+ask before it edits. The routine an agent follows is the `recall` skill
+in `.claude/skills/`; nothing in it runs at session start on its own or
+injects memory into a session automatically — that is retrieve-on-submit,
+steward-gated ([PROPOSALS.md](PROPOSALS.md)).
+
 ## Forbidden in this dogfood
 
 Do not put any of these in the inbox, and the tool must never grow them:
@@ -190,7 +215,7 @@ round.
 `--max-slots` relocate or resize those defaults when you keep your tray
 (or your constitution) elsewhere. The single-source drains remain for
 when you want just one side (they read one file and never sweep, so
-`--spool` is refused outside `--dogfood`):
+`--spool` is refused on them; `--dogfood` and `--status` both take it):
 
 ```sh
 # during the day: standups, PR review notes, CI post-mortems,
@@ -235,8 +260,10 @@ and its trace (`helix/traces/ask.json`) contains no `store.write` and
 needs no permit. A note is remembered by its filename, title, headings,
 and a capped bag of its body keywords — accent-folded, so "reunion"
 finds "réunion". Titles and headings are kept as you wrote them: the
-title is the first heading when there is one, and every heading is
-stored whole, because you wrote those lines as summaries. A
+title is the first heading of any level when there is one, and every
+second-level-or-deeper heading (`##` to `######`) is stored whole,
+because you wrote those lines as summaries; a later `#` line is body
+text. A
 heading-less packet (every ordinary Claude Code prompt) has no summary,
 so its first line stands in, clipped at 120 characters on a word
 boundary. Body text never persists as prose: it becomes the capped
@@ -257,7 +284,10 @@ clock for a query. A question may name one period:
 | `on YYYY-MM-DD` (or a bare date) | nothing | that day |
 | `between A and B` / `from A to B` | nothing | both days inclusive |
 
-Periods are calendar units, never rolling windows: `last week` with
+`D` is a calendar day in the offset you give, so pair a local date
+with a local offset (`--as-of "$(date +%F)" --utc-offset -04:00`) and a
+UTC date with UTC days (`--as-of "$(date -u +%F)"`). Periods are
+calendar units, never rolling windows: `last week` with
 `--as-of 2026-09-07` selects observation times in
 `[2026-08-31T00:00:00Z, 2026-09-07T00:00:00Z)`, and so does a Wednesday
 `--as-of 2026-09-09`. Day boundaries fall at midnight UTC unless
@@ -284,7 +314,9 @@ review"'`) requires every one of its words; when the phrase appears
 as you wrote it in a note's name, title, or a heading the hit says
 "adjacent" and scores higher, and when its words are only in the body
 keyword bag the hit says so, because body prose is never stored and
-adjacency there cannot be checked. The wall clock stays in your shell: an alias such as
+adjacency there cannot be checked; a phrase made only of small words
+("last week", as words someone wrote) can only match adjacently. The
+wall clock stays in your shell: an alias such as
 `alias ask-today='bun run tray --as-of "$(date -u +%F)" --ask'` keeps
 the run itself reproducible.
 
@@ -364,7 +396,7 @@ refuses the Graft shape outright):
     a period as days; a word in a name, title, or heading counts double,
     query words match stored words they begin, quoted phrases require
     every word and say whether they were adjacent, provenance never
-    matches as content, and every result lists the newest first.
+    matches as content, and ties list the newest first.
     `bun run status` says what is waiting and what memory holds without
     running anything; `bun run hook-snippet` prints the one block the
     hook install needs; the digest counts unchanged re-commits on one
@@ -379,7 +411,7 @@ Next, in rank order:
     came from), a git commit-message channel, buffer rotation, the
     title-clip policy, and where real multi-note synthesis belongs —
     each as the smallest diff against the IR or the adapter contract,
-    ending "requires Kormie".
+    each naming its gate and what it needs from Kormie.
 12. **Steward-gated proposals only.** Richer structural edges live in the
     frozen `structural` transform, and this whole domain belongs to the
     `agora` twin eventually — both go to Kormie as graph diffs, not code.

@@ -308,6 +308,19 @@ describe("the wider period surface (calendar units, fixed offsets, absolute days
     expect(interval("yesterday", "2026-09-05", "-00:00")?.utcOffset).toBe("-00:00");
   });
 
+  it("leaves a dated note name alone: a date literal must stand by itself", () => {
+    expect(temporalQuery("what did I write in 2026-09-01-plan.md").interval).toBeUndefined();
+    expect(temporalQuery("what did I write in 2026-09-01-plan.md").residual)
+      .toBe("what did I write in 2026-09-01-plan.md");
+    expect(temporalQuery("v2026-09-01 build").interval).toBeUndefined();
+    expect(temporalQuery("on 2026-09-01, the canary").interval?.label).toBe("on 2026-09-01");
+    const storeFile = join(tmp("dated-name"), "store.json");
+    drainPackets([packet("2026-09-01-plan.md", "2026-09-05T12:00:00Z", "# Plan\nrollout steps")], storeFile, emptyCore(), kernel);
+    expect(runAsk("what did I write in 2026-09-01-plan.md", storeFile, emptyCore(), kernel)
+      .hits.map((h) => h.note)).toEqual(["2026-09-01-plan.md"]);
+    expect(() => temporalQuery("between 2026-09-01 and 2026-09-03 and 2026-09-07")).toThrow(/more than one period/);
+  });
+
   it("refuses ambiguous or under-specified periods", () => {
     expect(() => temporalQuery("yesterday and last week", "2026-09-05")).toThrow(/one period per question/);
     expect(() => temporalQuery("2026-09-01 or 2026-09-03")).toThrow(/two dates/);

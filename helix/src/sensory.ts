@@ -53,7 +53,10 @@ export const TITLE_MAX = 120;
 export function clipTitle(line: string): string {
   if (line.length <= TITLE_MAX) return line;
   const head = line.slice(0, TITLE_MAX);
-  const cut = head.search(/\s\S*$/u);
+  // Cut back to the last word boundary only when the limit falls inside
+  // a word; a word that ends exactly at the limit is kept whole.
+  const splitsWord = !/\s/u.test(line[TITLE_MAX] ?? " ");
+  const cut = splitsWord ? head.search(/\s\S*$/u) : head.length;
   return (cut > 0 ? head.slice(0, cut) : head).trimEnd();
 }
 

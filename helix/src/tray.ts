@@ -105,14 +105,22 @@ export interface Phrase {
   tokens: string[];
 }
 
+/** Folded, punctuation-free, single-spaced — the one normal form both a
+ * phrase and the strings it is checked against go through, so a phrase
+ * typed exactly as a punctuated title is adjacent. */
+function phraseText(text: string): string {
+  return fold(text).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
 /** Pull "quoted spans" out of a question. Unbalanced quotes are plain
- * text. A phrase with no content words is ignored. */
+ * text. A phrase made only of stopwords ("last week" as words someone
+ * wrote) has no content words to look for in the keyword bag, so it can
+ * only match adjacently in a name, title, or heading. */
 export function extractPhrases(question: string): { phrases: Phrase[]; rest: string } {
   const phrases: Phrase[] = [];
   const rest = question.replace(/"([^"]+)"/gu, (_m, span: string) => {
-    const text = fold(span).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-    const toks = queryTokens(span);
-    if (toks.length > 0) phrases.push({ text, tokens: toks });
+    const text = phraseText(span);
+    if (text !== "") phrases.push({ text, tokens: queryTokens(span) });
     return " ";
   });
   return { phrases, rest };
@@ -364,11 +372,14 @@ export function trayAppliers(
       // words ("yesterday", a date literal) never become lexical
       // requirements on the notes. Then quoted spans become phrases —
       // every word required — and the rest is the any-match word list.
-      const temporal = temporalQuery(text, slots[0]?.asOf, slots[0]?.utcOffset);
-      const { phrases, rest } = extractPhrases(temporal.residual);
+      // Quoted spans come out first so a period written in quotes ("last
+      // week", as words someone wrote) is a phrase, not a filter; the
+      // period is then recognised on what remains.
+      const { phrases, rest } = extractPhrases(text);
+      const temporal = temporalQuery(rest, slots[0]?.asOf, slots[0]?.utcOffset);
       return {
         query: {
-          tokens: queryTokens(rest),
+          tokens: queryTokens(temporal.residual),
           phrases,
           temporal,
           indexes: ["episodic", "semantic"],
@@ -404,11 +415,10 @@ export function trayAppliers(
             const weakHit = strongHit === undefined ? weak.find((wTok) => tokenMatches(q, wTok)) : undefined;
             const hit = strongHit ?? weakHit;
             if (hit === undefined) return false;
+            if (matched.includes(q)) return true; // scored once, however often it is asked
             score += strongHit !== undefined ? STRONG_WEIGHT : WEAK_WEIGHT;
-            if (!matched.includes(q)) {
-              matched.push(q);
-              via[q] = hit;
-            }
+            matched.push(q);
+            via[q] = hit;
             return true;
           };
           for (const q of query.tokens) scoreToken(q);
@@ -419,18 +429,17 @@ export function trayAppliers(
           // as "all words", never claimed as adjacent.
           const phrases: Record<string, "adjacent" | "all-words"> = {};
           let phrasesSatisfied = true;
-          const strings = [ep.note, ep.title, ...ep.headings].map((x) => fold(x).replace(/\s+/gu, " "));
+          const strings = [ep.note, ep.title, ...ep.headings].map(phraseText);
           for (const ph of query.phrases) {
-            const allWords = ph.tokens.map(scoreToken).every(Boolean);
-            if (!allWords) {
-              phrasesSatisfied = false;
-              continue;
-            }
-            if (strings.some((x) => x.includes(ph.text))) {
+            const adjacent = strings.some((x) => x.includes(ph.text));
+            const allWords = ph.tokens.length > 0 && ph.tokens.map(scoreToken).every(Boolean);
+            if (adjacent) {
               score += STRONG_WEIGHT;
               phrases[ph.text] = "adjacent";
-            } else {
+            } else if (allWords) {
               phrases[ph.text] = "all-words";
+            } else {
+              phrasesSatisfied = false;
             }
           }
           const observationTimeMs = validObservationTime(ep.observationTimeMs);
@@ -1089,7 +1098,8 @@ function printSweep(sweep: SweepReport, spoolDir: string, bufferFile: string): v
 
 /**
  * The Monday-afternoon operator command (DOGFOOD.md): sweep the hook's
- * spool into the buffer, resolve the source (buffer, else inbox), drain
+ * spool into the buffer, resolve the sources (everything in the buffer,
+ * then every inbox note, one backlog), drain
  * it through the one permit-gated write path, judge the emitted trace
  * with the untrusted judge, and print the three dogfood prompts. Returns
  * the process exit code: 0 when the drain's checks and the judge's
@@ -1189,7 +1199,8 @@ function runDogfood(
 
 /** The hook block for ~/.claude/settings.json, with this clone's path. */
 export function hookSnippetJson(): string {
-  const command = `node ${join(HELIX_ROOT, "adapters", "claude-code", "hook.mjs")}`;
+  // Quoted, so a clone under a directory with a space still runs.
+  const command = `node ${JSON.stringify(join(HELIX_ROOT, "adapters", "claude-code", "hook.mjs"))}`;
   const entry = { hooks: [{ type: "command", command }] };
   return JSON.stringify({ hooks: { UserPromptSubmit: [entry], Stop: [entry] } }, null, 2);
 }
@@ -1320,8 +1331,8 @@ function main(): void {
   }
 
   if (dogfood) {
-    if (asOf !== null) throw new Error("--as-of is only valid with --ask");
-    if (utcOffset !== null) throw new Error("--utc-offset is only valid with --ask");
+    if (asOf !== null) throw new Error("--as-of is only valid with --ask or --journal");
+    if (utcOffset !== null) throw new Error("--utc-offset is only valid with --ask or --journal");
     // With --dogfood, --spool, --buffer and --inbox merely relocate the
     // documented defaults; buffer and inbox drain together.
     const mnemeHome = join(homedir(), ".mneme");
@@ -1338,7 +1349,7 @@ function main(): void {
     return;
   }
   if (spool !== null) {
-    throw new Error("--spool is only valid with --dogfood (the single-source drains read one file)");
+    throw new Error("--spool is only valid with --dogfood or --status (the single-source drains read one file)");
   }
   if (inbox !== null && buffer !== null) {
     throw new Error("choose one ingest source per run: --inbox or --buffer");

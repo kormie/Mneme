@@ -150,7 +150,7 @@ change with no migration.
 
 ## 6. Multi-note synthesis
 
-**What was asked:** roadmap item 10 named "multi-note synthesis". What
+**What was asked:** the roadmap once named "multi-note synthesis". What
 a deterministic stand-in can offer is a keyword intersection across
 hits ("words these notes share") and the by-day journal. The journal
 shipped. The intersection did not: three independent reviewers agreed
@@ -164,3 +164,112 @@ channel, and a Core clause about what a synthesis may say. Nothing to
 build in this slice.
 
 **Not implemented; needs the 0.11 pack.**
+
+## 7. Two memories from one capture: personal and organizational
+
+**The direction (Kormie, 2026-09-05):** MNEME installs via MDM on every
+employee laptop, travels with the person, and contributes to both their
+own memory and an organizational memory.
+
+**What the spec already says about it.** Personal memory is the loop
+that exists: one Core per human, one `core.permit` per write, a store
+that is one file the person owns. Organizational memory is not a bigger
+store; in the IR it is a partition with a secrecy class, mounted for a
+twin under the `agora` seed ("Work & craft"), whose never-clause reads
+"cannot install a domain that spies on collaborators". A person writes
+into that partition only through a CapToken they minted (scope, expiry,
+holder) and `CoreBind`, which intersects and never mints (ADR-010). So
+the org memory is **pull by consent, never push by policy**: MDM may
+install the capture and the personal loop on every laptop; nothing
+leaves a laptop for the org partition without that person's token, and
+a revoked token stops it (`cap.revoke`). That rule is what keeps a
+fleet-wide prompt recorder on the right side of the brief's refusals.
+
+**Gates:** the partition, the twin install (`twin.install` after a
+`steward.ack`), capability tokens, and `CoreBind` are all on AGENTS.md's
+list, and the org partition is 0.11-shaped (it needs the sealed
+provenance sidecar, because a note in a shared partition must carry
+who, where, and when in a form the writer cannot forge).
+
+**Not gated, and buildable in this slice — packaging:**
+
+- an idempotent, non-interactive installer (pinned bun, `bun install
+  --frozen-lockfile`, a per-user data directory, `helix/store` outside
+  the clone) that MDM can run as the user;
+- `hook-snippet` grown into an installer that merges the hook into
+  `~/.claude/settings.json` on request (today it only prints — the
+  print-only choice was made so an agent never edits the operator's
+  Claude settings; an MDM run is a different actor and needs an explicit
+  flag);
+- a launch agent / service unit for the listener, optional (the sweep
+  makes it unnecessary for correctness);
+- `--status --json` so a fleet can be asked "is the hook alive on this
+  machine" without a human reading prose.
+
+**What the org partition needs before it exists:** the `origin` field
+(item 2) extended to `{ person, host, cwd, session }`; a decision on
+what the org partition keeps (agent notes about shared repositories
+are the obvious first content, prompts are not); and the first Core
+value a person can flip to say "my notes about repository X may join
+the organization's memory".
+
+**Not implemented; requires Kormie, and a 0.11 pack for the partition.**
+
+## 8. A durable home for the store
+
+**What:** `~/.mneme` is per-machine and a cloud Claude Code container
+starts empty and is reclaimed, so in that setting even a perfect memory
+survives only until the container does. Tonight's stopgap is a dated
+`.jsonl` of agent notes checked into the repo and drained on demand,
+which works for engineering knowledge about the repo and for nothing
+else.
+
+**Gate:** none in AGENTS.md; a privacy decision and a product decision.
+The store holds the person's prompts and notes; committing it to a
+shared repository would put personal memory in the organization's hands
+and make the repository the memory (brief §11 refuses that shape).
+
+**Options for Kormie to pick from:** (a) a private per-person repository
+or branch the tray syncs on `dogfood` (explicit `--sync`, never
+automatic); (b) a user-owned object store path with the same explicit
+sync; (c) the store stays on the laptop and cloud sessions bootstrap
+from the checked-in agent notes only, which is today. Whatever the home,
+the sync must be a projection of the store, not a second write path:
+the trace stays the artifact and the file stays the person's.
+
+**Not implemented; requires Kormie.**
+
+## 9. A steward review-thread channel
+
+**What:** the highest-value memory this repository has is what the
+steward pushed back on in PR review, and no agent reads it by default;
+this session re-derived three of PR #21's review asks before finding the
+thread. A `github` channel would push one packet per review comment the
+steward writes (`kind: review-comment`, `text` = the comment, `t` = its
+timestamp), so `bun run ask "residual"` surfaces "keep period vocabulary
+in temporal-query.ts via a residual question" before anyone writes the
+opposite.
+
+**Gate:** a new channel value in the closed set, and a new adapter
+(ADAPTER.md names further adapters as out of scope). It is the human's
+own words, so `human-utterance-only` would admit it once `kind` is
+named; the §11 fence holds because comments are what the steward wrote,
+never the diff.
+
+**Interim, no gate:** the `recall` skill tells an agent to read the last
+few merged PRs' review threads by hand.
+
+**Not implemented; requires Kormie.**
+
+## 10. Automatic recall at session start is retrieve-on-submit
+
+**What was considered and not built:** a Claude Code `SessionStart` hook
+that runs `bun run ask` for the working directory and prints the hits,
+so every session begins with memory in context.
+
+**Why it is here:** that is item 1 by another door — memory shaping a
+session without the human asking — and ADAPTER.md gates it. The
+`recall` skill is the allowed shape: the agent chooses to ask, the
+output is read like any other command output, and nothing is injected.
+
+**Not implemented; requires Kormie (as part of item 1).**

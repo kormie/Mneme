@@ -75,13 +75,33 @@ describe("--status is a pure inspection", () => {
     expect(stdout).toContain("session-stop is punctuation");
     expect(stdout).toContain("1 markdown note(s)");
     expect(stdout).toContain("1 remembered — by channel claude-code 1; by kind user-prompt 1");
-    expect(stdout).toContain("next: bun run dogfood");
+    expect(stdout).toContain("next: bun run dogfood (1 spooled + 1 inbox note(s) to drain)");
     expect(stdout).toContain("no graph ran, no trace written");
     expect(stdout).not.toContain(w.sentinel);
     // Nothing consumed, nothing written.
     expect(readdirSync(w.spool).sort()).toEqual(["cc-spooled.json", "junk.json.bad"]);
     expect(readFileSync(w.store, "utf8")).toBe(before);
     expect(existsSync(join(HELIX_ROOT, "traces", "status.json"))).toBe(false);
+  });
+
+  it("never recommends a drain for buffer packets alone (they may be Core denials)", async () => {
+    const dir = tmp("denied-status");
+    const buffer = join(dir, "buffer.jsonl");
+    writeFileSync(buffer, JSON.stringify(packet("cc-denied", "tool-result", 1756000000000, "compiler output")) + "\n");
+    const { stdout } = await run("bun", [
+      TRAY, "--status",
+      "--spool", join(dir, "spool"), "--buffer", buffer, "--inbox", join(dir, "inbox"),
+      "--store", join(dir, "store.json"), "--core", join(dir, "no-core.json"),
+    ]);
+    expect(stdout).toContain("buffered, not remembered: tool-result 1");
+    expect(stdout).toContain("nothing new is waiting; a re-drain commits any of the 1 un-remembered");
+    expect(stdout).not.toContain("next: bun run dogfood (");
+  });
+
+  it("accepts --spool, like --dogfood, and refuses it on the single-source drains", async () => {
+    const dir = tmp("status-spool");
+    await expect(run("bun", [TRAY, "--inbox", join(dir, "i"), "--spool", join(dir, "s"), "--core", join(dir, "no-core.json")]))
+      .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("--spool is only valid with --dogfood or --status") });
   });
 
   it("exits 0 on an empty world and points at --ask", async () => {
@@ -191,8 +211,9 @@ describe("--hook-snippet", () => {
     for (const event of ["UserPromptSubmit", "Stop"]) {
       const cmd = parsed.hooks[event]?.[0]?.hooks[0];
       expect(cmd?.type).toBe("command");
-      expect(cmd?.command.startsWith("node ")).toBe(true);
-      const hookPath = cmd?.command.slice("node ".length) as string;
+      expect(cmd?.command.startsWith('node "')).toBe(true);
+      // The path is double-quoted so a clone under "My Projects" still runs.
+      const hookPath = JSON.parse(cmd?.command.slice("node ".length) as string) as string;
       expect(hookPath).toBe(join(HELIX_ROOT, "adapters", "claude-code", "hook.mjs"));
       expect(existsSync(hookPath)).toBe(true);
     }

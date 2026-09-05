@@ -92,8 +92,10 @@ const RELATIVE: { label: string; re: RegExp }[] = [
 
 /** Absolute periods: a range "between A and B" / "from A to B" (both days
  * inclusive), or a single day, written with or without "on". */
-const RANGE = /\b(?:between|from)\s+(\d{4}-\d{2}-\d{2})\s+(?:and|to)\s+(\d{4}-\d{2}-\d{2})\b/iu;
-const SINGLE_DAY = /\b(?:on\s+)?(\d{4}-\d{2}-\d{2})\b/iu;
+// A date literal must stand alone: "2026-09-01-plan.md" is a note's
+// name, not a day, so nothing word-like or a hyphen may touch it.
+const RANGE = /(?<![\w-])(?:between|from)\s+(\d{4}-\d{2}-\d{2})(?![\w-])\s+(?:and|to)\s+(\d{4}-\d{2}-\d{2})(?![\w-])/iu;
+const SINGLE_DAY = /(?<![\w-])(?:on\s+)?(\d{4}-\d{2}-\d{2})(?![\w-])/iu;
 
 interface Shifted {
   label: string;
@@ -158,6 +160,11 @@ export function temporalQuery(
       shifted: { label: `${range[1]} to ${range[2]}`, startMs: a, endMs: b + DAY_MS },
       relative: false,
     });
+    // A further date beyond the range is ambiguous, not lexical.
+    const rest = question.slice(0, range.index) + question.slice(range.index + range[0].length);
+    if (SINGLE_DAY.test(rest)) {
+      throw new Error("more than one period in the question; a range and a further date cannot both apply");
+    }
   } else {
     const single = SINGLE_DAY.exec(question);
     if (single !== null) {

@@ -41,6 +41,10 @@ describe("titles from packet text", () => {
     expect(clipTitle("x".repeat(TITLE_MAX))).toBe("x".repeat(TITLE_MAX));
     // One unbroken run of TITLE_MAX+ characters has no boundary to cut at.
     expect(clipTitle("y".repeat(TITLE_MAX + 5))).toBe("y".repeat(TITLE_MAX));
+    // A word that ends exactly at the limit is kept whole, not cut back.
+    const exact = "a".repeat(TITLE_MAX - 5) + " word";
+    expect(exact).toHaveLength(TITLE_MAX);
+    expect(clipTitle(exact + " tail")).toBe(exact);
     expect(firstLine("   \n  \n")).toBeNull();
   });
 

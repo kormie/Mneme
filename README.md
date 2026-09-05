@@ -60,10 +60,16 @@ bun run dogfood                                  # sweep, drain, judge
 
 # read memory the way you would a journal (the clock stays in your
 # shell; the run itself is reproducible):
-bun run journal "yesterday" --as-of "$(date -u +%F)" --utc-offset -04:00
-bun run journal "this week" --as-of "$(date -u +%F)"
-bun run ask "canary rollout"                     # newest first
+bun run journal "yesterday" --as-of "$(date +%F)" --utc-offset -04:00   # local date, local offset
+bun run journal "this week" --as-of "$(date -u +%F)"                     # UTC date, UTC days
+bun run ask "canary rollout"                     # by match strength, then newest first
 bun run ask '"code review" last week' --as-of "$(date -u +%F)"
+
+# an agent (or you) records a finding on purpose; it enters memory on the
+# next dogfood, through the same gate and permit, refused by a
+# human-utterance-only Core:
+bun run remember "STOPWORDS is shared with the store index
+Growing it rewrites stored triples on re-drain; see helix/src/tray.ts."
 ```
 
 `dogfood` sweeps the hook's spool through the sensory graph into the

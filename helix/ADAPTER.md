@@ -13,7 +13,10 @@ back out — committing what the buffer holds is a separate,
 operator-initiated tray drain.
 
 This ships one real adapter — Claude Code hooks — plus the `file`
-channel the desk tray already uses ([DOGFOOD.md](DOGFOOD.md)).
+channel the desk tray already uses ([DOGFOOD.md](DOGFOOD.md)), and one
+sensor with a hand on the button: `bun run remember`, which spools a
+single `agent-note` packet on the `claude-code` channel and stops
+(DOGFOOD.md, "Agent notes").
 
 ## The Observation packet
 

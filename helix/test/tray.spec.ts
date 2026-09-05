@@ -301,13 +301,38 @@ describe("quoted phrases", () => {
     expect(both.hits[0]?.matched).toEqual(["approvals", "code", "review"]);
   });
 
-  it("treats unbalanced quotes as plain text and a phrase of stopwords as no phrase", () => {
+  it("treats unbalanced quotes as plain text, and a stopword-only phrase as adjacency-only", () => {
     const sf = join(tmp("quotes"), "tray.json");
     drainPackets([note("n.md", t0, "# Notes\n\nthe review went well")], sf, emptyCore(), kernel);
     expect(runAsk('review "went', sf, emptyCore(), kernel).hits[0]?.matched).toEqual(["review", "went"]);
-    expect(runAsk('"the" review', sf, emptyCore(), kernel).hits[0]?.phrases).toBeUndefined();
+    // "the" has no content words and is not in the title: no hit at all.
+    expect(runAsk('"the" review', sf, emptyCore(), kernel).hits).toEqual([]);
     expect(runAsk('"went well"', sf, emptyCore(), kernel).hits[0]?.phrases).toEqual({ "went well": "all-words" });
     expect(runAsk('"went badly"', sf, emptyCore(), kernel).hits).toEqual([]);
+  });
+
+  it("scores a word once however often it is asked, and treats a quoted period as words", () => {
+    const sf = join(tmp("phrase-once"), "tray.json");
+    drainPackets([
+      note("deploy.md", t0, "# Deploy day\n\ncanary went out"),
+      note("lw.md", t0 + 1000, "# What happened last week\n\nnotes"),
+    ], sf, emptyCore(), kernel);
+    const once = runAsk('"deploy canary"', sf, emptyCore(), kernel).hits[0];
+    const twice = runAsk('deploy "deploy canary"', sf, emptyCore(), kernel).hits[0];
+    expect(twice?.score).toBe(once?.score);
+    expect(twice?.matched).toEqual(["deploy", "canary"]);
+    // A period in quotes is a phrase someone wrote, not a filter: no --as-of needed.
+    const quoted = runAsk('"last week"', sf, emptyCore(), kernel);
+    expect(quoted.observationInterval).toBeUndefined();
+    expect(quoted.hits.map((h) => h.note)).toEqual(["lw.md"]);
+    expect(quoted.hits[0]?.phrases).toEqual({ "last week": "adjacent" });
+  });
+
+  it("finds a phrase typed exactly as a punctuated title as adjacent", () => {
+    const sf = join(tmp("phrase-punct"), "tray.json");
+    drainPackets([note("cd.md", t0, "# Canary/deploy plan\n\nsteps")], sf, emptyCore(), kernel);
+    const hit = runAsk('"canary/deploy"', sf, emptyCore(), kernel).hits[0];
+    expect(hit?.phrases).toEqual({ "canary deploy": "adjacent" });
   });
 
   it("combines with a period and stays deterministic", () => {
