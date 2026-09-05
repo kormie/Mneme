@@ -18,20 +18,31 @@
  * The clock is read here, once, as the adapter's own observation time —
  * adapters observe when things happen; Helix's graphs never consult it.
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
-import { defaultSpoolDir } from "./buffer-path.js";
+import { resolveSpoolDir } from "./buffer-path.js";
 import { isObservation, type Observation } from "./observation.js";
 
 export const AGENT_NOTE_KIND = "agent-note";
+
+/** A packet id is one path segment in the hook's alphabet: it names the
+ * spool file, so it must never be able to leave the spool directory. */
+export const PACKET_ID = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/u;
+
+export function assertPacketId(id: string): void {
+  if (!PACKET_ID.test(id) || id !== basename(id) || id === "." || id === "..") {
+    throw new Error(`--id must be a single path segment of [A-Za-z0-9._-], got ${JSON.stringify(id)}`);
+  }
+}
 
 /** Build the packet. `t` is the observation time in Unix milliseconds;
  * `id` defaults to the hook's shape (`cc-<t>-<8 hex>`) with an `an-`
  * prefix so a spool listing shows what an agent wrote. */
 export function agentNote(text: string, t: number, id?: string): Observation {
+  if (id !== undefined) assertPacketId(id);
   const packet: Observation = {
     id: id ?? `an-${t}-${randomUUID().slice(0, 8)}`,
     t,
@@ -43,18 +54,22 @@ export function agentNote(text: string, t: number, id?: string): Observation {
   return packet;
 }
 
-/** One JSON file per packet, exactly as hook.mjs spools. Returns the path. */
+/** One JSON file per packet, exactly as hook.mjs spools: written under a
+ * `.tmp` name and renamed into place, so a sweep running at the same
+ * moment never reads a half-written file. Returns the path. */
 export function spoolPacket(spoolDir: string, packet: Observation): string {
+  assertPacketId(packet.id);
   mkdirSync(spoolDir, { recursive: true });
   const file = join(spoolDir, `${packet.id}.json`);
-  writeFileSync(file, JSON.stringify(packet) + "\n");
+  writeFileSync(`${file}.tmp`, JSON.stringify(packet) + "\n");
+  renameSync(`${file}.tmp`, file);
   return file;
 }
 
 function main(): void {
   const args = process.argv.slice(2);
   let text: string | null = null;
-  let spool = process.env.MNEME_SPOOL ?? defaultSpoolDir(join(homedir(), ".mneme"));
+  let spool = resolveSpoolDir(join(homedir(), ".mneme"));
   let t: number | null = null;
   let id: string | null = null;
   for (let i = 0; i < args.length; i++) {

@@ -24,7 +24,7 @@ import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
-import { defaultBufferFile, defaultSpoolDir } from "./buffer-path.js";
+import { defaultBufferFile, resolveSockPath, resolveSpoolDir } from "./buffer-path.js";
 import {
   coreSnapshot,
   defaultCoreFile,
@@ -1318,12 +1318,15 @@ function main(): void {
     }
     if (maxSlots !== null) throw new Error("--max-slots is not valid with --status (inspection only)");
     const mnemeHome = join(homedir(), ".mneme");
+    const bufferFile = buffer ?? defaultBufferFile(mnemeHome);
     const paths = {
-      spoolDir: spool ?? defaultSpoolDir(mnemeHome),
-      bufferFile: buffer ?? defaultBufferFile(mnemeHome),
+      spoolDir: spool ?? resolveSpoolDir(mnemeHome),
+      bufferFile,
       inboxDir: inbox ?? join(homedir(), "mneme-tray"),
       storeFile,
-      sockPath: join(mnemeHome, "helix.sock"),
+      // The listener's socket lives beside the buffer unless MNEME_SOCK
+      // says otherwise — the same rule the hook applies.
+      sockPath: resolveSockPath(dirname(bufferFile)),
     };
     console.log(coreLine);
     printStatus(trayStatus(paths), paths);
@@ -1337,7 +1340,7 @@ function main(): void {
     // documented defaults; buffer and inbox drain together.
     const mnemeHome = join(homedir(), ".mneme");
     process.exitCode = runDogfood(
-      spool ?? defaultSpoolDir(mnemeHome),
+      spool ?? resolveSpoolDir(mnemeHome),
       buffer ?? defaultBufferFile(mnemeHome),
       inbox ?? join(homedir(), "mneme-tray"),
       storeFile,

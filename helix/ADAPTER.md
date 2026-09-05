@@ -163,11 +163,16 @@ and no further strings join that check without the steward. The
 hook writes the packet to the socket and exits 0; if the socket is down
 it spools the packet as one JSON file under `~/.mneme/spool` and still
 exits 0 — the listener drains the spool when it is next up, or `bun run
-dogfood` sweeps it at the next run. A hook must
+dogfood` sweeps it at the next run. The spool file is written under a
+`.tmp` name and renamed into place, so a sweep never reads a
+half-written packet; a file a sweep could not parse is renamed `.bad`
+and can be retried by removing that suffix. A hook must
 never break the tool it observes, so every failure path exits 0, and it
 prints nothing to stdout (on `UserPromptSubmit`, hook stdout would be
 injected into the model's context). Environment overrides: `MNEME_SOCK`
-and `MNEME_SPOOL`.
+and `MNEME_SPOOL` — honoured by the hook, `remember`, the listener,
+`--dogfood`'s sweep, and `--status` alike, so a relocated spool is swept
+wherever it was relocated to.
 
 ## Forbidden scrape
 

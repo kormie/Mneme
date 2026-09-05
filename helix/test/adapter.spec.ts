@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -109,6 +109,30 @@ describe("the spool directory", () => {
 
   it("returns nothing for a spool directory that never existed", () => {
     expect(drainSpool(join(tmp("empty"), "nope"))).toEqual([]);
+  });
+
+  it("keeps going when another sweeper consumed a file first (ENOENT is not an error)", () => {
+    const spool = tmp("race");
+    const a = { ...fixturePacket(), id: "cc-race-a" };
+    writeFileSync(join(spool, "cc-race-a.json"), JSON.stringify(a));
+    // A dangling symlink is what readdir lists and readFileSync cannot open:
+    // exactly the shape of a file the other sweeper unlinked a moment ago.
+    symlinkSync(join(spool, "gone"), join(spool, "aaa-gone.json"));
+    writeFileSync(join(spool, "cc-race-z.json"), JSON.stringify({ ...a, id: "cc-race-z" }));
+    const packets = drainSpool(spool);
+    expect(packets.map((p) => p.id)).toEqual(["cc-race-a", "cc-race-z"]);
+    expect(readdirSync(spool).filter((f) => f.endsWith(".bad"))).toEqual([]);
+  });
+
+  it("ignores a packet the hook is still writing (.tmp), then sweeps it once renamed", () => {
+    const spool = tmp("tmp");
+    const a = { ...fixturePacket(), id: "cc-tmp-a" };
+    writeFileSync(join(spool, "cc-tmp-a.json.tmp"), JSON.stringify(a).slice(0, 20)); // half-written
+    expect(drainSpool(spool)).toEqual([]);
+    expect(readdirSync(spool)).toEqual(["cc-tmp-a.json.tmp"]); // not sidelined as .bad
+    writeFileSync(join(spool, "cc-tmp-a.json.tmp"), JSON.stringify(a));
+    renameSync(join(spool, "cc-tmp-a.json.tmp"), join(spool, "cc-tmp-a.json"));
+    expect(drainSpool(spool).map((p) => p.id)).toEqual(["cc-tmp-a"]);
   });
 });
 

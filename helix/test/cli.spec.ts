@@ -13,6 +13,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "bun:test";
 import { emptyCore } from "../src/core.js";
 import { clip, DISPLAY_TITLE_MAX } from "../src/display.js";
+import { loadStore } from "../src/store.js";
 import { loadKernel } from "../src/kernel.js";
 import type { Observation } from "../src/observation.js";
 import { scanSpool } from "../src/sources.js";
@@ -63,6 +64,8 @@ describe("--status is a pure inspection", () => {
   it("reports spool, buffer, inbox, and memory counts without consuming or printing anything", async () => {
     const w = world();
     const before = readFileSync(w.store, "utf8");
+    const tracesDir = join(HELIX_ROOT, "traces");
+    const tracesBefore = existsSync(tracesDir) ? readdirSync(tracesDir).sort() : null;
     const { stdout } = await run("bun", [
       TRAY, "--status",
       "--spool", w.spool, "--buffer", w.buffer, "--inbox", w.inbox, "--store", w.store,
@@ -81,7 +84,37 @@ describe("--status is a pure inspection", () => {
     // Nothing consumed, nothing written.
     expect(readdirSync(w.spool).sort()).toEqual(["cc-spooled.json", "junk.json.bad"]);
     expect(readFileSync(w.store, "utf8")).toBe(before);
-    expect(existsSync(join(HELIX_ROOT, "traces", "status.json"))).toBe(false);
+    // No trace anywhere: the repo's traces dir is exactly as it was.
+    expect(existsSync(tracesDir) ? readdirSync(tracesDir).sort() : null).toEqual(tracesBefore);
+    expect(readdirSync(w.dir).sort()).toEqual(["buffer.jsonl", "inbox", "spool", "store.json"]);
+  });
+
+  it("reports the listener socket beside the buffer, or where MNEME_SOCK points", async () => {
+    const w = world();
+    const args = ["--status", "--spool", w.spool, "--buffer", w.buffer, "--inbox", w.inbox,
+      "--store", w.store, "--core", join(w.dir, "no-core.json")];
+    const absent = await run("bun", [TRAY, ...args]);
+    expect(absent.stdout).toContain(`listener socket ${join(w.dir, "helix.sock")}: absent`);
+    writeFileSync(join(w.dir, "helix.sock"), ""); // a stale or live socket path: present, never probed
+    const present = await run("bun", [TRAY, ...args]);
+    expect(present.stdout).toContain(`listener socket ${join(w.dir, "helix.sock")}: present (not probed)`);
+    const env = await run("bun", [TRAY, ...args], { env: { ...process.env, MNEME_SOCK: join(w.dir, "elsewhere.sock") } });
+    expect(env.stdout).toContain(`listener socket ${join(w.dir, "elsewhere.sock")}: absent`);
+  });
+
+  it("honours MNEME_SPOOL like the hook does, for --status and for the dogfood sweep", async () => {
+    const dir = tmp("env-spool");
+    const spool = join(dir, "relocated-spool");
+    mkdirSync(spool, { recursive: true });
+    writeFileSync(join(spool, "cc-env.json"), JSON.stringify(packet("cc-env", "user-prompt", 1756000000000, "from env")) + "\n");
+    const env = { ...process.env, MNEME_SPOOL: spool };
+    const common = ["--buffer", join(dir, "buffer.jsonl"), "--inbox", join(dir, "inbox"),
+      "--store", join(dir, "store.json"), "--core", join(dir, "no-core.json")];
+    const status = await run("bun", [TRAY, "--status", ...common], { env });
+    expect(status.stdout).toContain(`spool ${spool}: 1 packet file(s) waiting`);
+    const drain = await run("bun", [TRAY, "--dogfood", ...common, "--out", join(dir, "t.json")], { env });
+    expect(drain.stdout).toContain(`sweep: 1 spooled packet(s) from ${spool}`);
+    expect(Object.keys(loadStore(join(dir, "store.json")).episodic)).toEqual(["ep:cc-env"]);
   });
 
   it("never recommends a drain for buffer packets alone (they may be Core denials)", async () => {
@@ -176,6 +209,8 @@ describe("--limit and display clipping", () => {
     const long = "w".repeat(DISPLAY_TITLE_MAX + 20);
     expect(clip(long)).toHaveLength(DISPLAY_TITLE_MAX);
     expect(clip(long).endsWith("…")).toBe(true);
+    const emoji = clip("😀".repeat(DISPLAY_TITLE_MAX + 5));
+    expect(Buffer.from(emoji, "utf8").toString("utf8")).toBe(emoji); // no lone surrogate
     const dir = tmp("clip");
     const store = join(dir, "store.json");
     const text = "deploy " + "again and ".repeat(10).trim(); // > DISPLAY_TITLE_MAX (96), < TITLE_MAX (120)

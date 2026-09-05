@@ -41,6 +41,11 @@ describe("titles from packet text", () => {
     expect(clipTitle("x".repeat(TITLE_MAX))).toBe("x".repeat(TITLE_MAX));
     // One unbroken run of TITLE_MAX+ characters has no boundary to cut at.
     expect(clipTitle("y".repeat(TITLE_MAX + 5))).toBe("y".repeat(TITLE_MAX));
+    // An astral character straddling the limit is kept whole or dropped, never split.
+    const astral = "/no/spaces/".padEnd(TITLE_MAX - 1, "x") + "😀 tail words";
+    const clipped = clipTitle(astral);
+    expect(Buffer.from(clipped, "utf8").toString("utf8")).toBe(clipped); // no lone surrogate
+    expect([...clipped].length).toBeLessThanOrEqual(TITLE_MAX);
     // A word that ends exactly at the limit is kept whole, not cut back.
     const exact = "a".repeat(TITLE_MAX - 5) + " word";
     expect(exact).toHaveLength(TITLE_MAX);

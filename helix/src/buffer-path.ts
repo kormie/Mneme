@@ -14,3 +14,14 @@ export function defaultBufferFile(base: string): string {
 export function defaultSpoolDir(base: string): string {
   return join(base, "spool");
 }
+
+/** The hook honours MNEME_SPOOL and MNEME_SOCK (ADAPTER.md); every
+ * process that sweeps or inspects the spool must resolve it the same
+ * way, or a relocated spool is silently never swept. */
+export function resolveSpoolDir(base: string, env: NodeJS.ProcessEnv = process.env): string {
+  return env.MNEME_SPOOL ?? defaultSpoolDir(base);
+}
+
+export function resolveSockPath(base: string, env: NodeJS.ProcessEnv = process.env): string {
+  return env.MNEME_SOCK ?? join(base, "helix.sock");
+}

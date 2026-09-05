@@ -14,7 +14,7 @@
 // memory store itself. It also prints nothing to stdout: on
 // UserPromptSubmit, hook stdout would be injected into the model context.
 import { connect } from "node:net";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -52,7 +52,12 @@ function packetFor(hook) {
 function spool(packet) {
   try {
     mkdirSync(SPOOL, { recursive: true });
-    writeFileSync(join(SPOOL, `${packet.id}.json`), JSON.stringify(packet) + "\n");
+    // Written under a .tmp name and renamed into place: a sweep (the
+    // listener's, or the operator's dogfood run) filters on .json, so it
+    // never reads a half-written packet and sidelines it as .bad.
+    const file = join(SPOOL, `${packet.id}.json`);
+    writeFileSync(`${file}.tmp`, JSON.stringify(packet) + "\n");
+    renameSync(`${file}.tmp`, file);
   } catch {
     // Even a failed spool exits 0: dropping one observation is better
     // than breaking the operator's session.

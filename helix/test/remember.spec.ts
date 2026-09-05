@@ -79,6 +79,20 @@ describe("bun run remember", () => {
     expect(built).toMatchObject({ id: "custom", t: 5, kind: AGENT_NOTE_KIND, channel: "claude-code" });
   });
 
+  it("refuses an --id that is not a single path segment, so a note can never leave the spool", async () => {
+    const dir = tmp("id");
+    const spool = join(dir, "spool");
+    for (const bad of ["../escaped", "a/b", "..", ".", "", "with space", ".hidden"]) {
+      await expect(run("bun", [REMEMBER, "note", "--spool", spool, "--id", bad, "--t", "1"]))
+        .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("--id must be a single path segment") });
+    }
+    expect(readdirSync(dir)).toEqual([]);
+    expect(() => agentNote("x", 1, "../x")).toThrow(/single path segment/);
+    expect(() => agentNote("x", 1, "nul\u0000")).toThrow(/single path segment/); // no NUL through a spawn
+    await run("bun", [REMEMBER, "note", "--spool", spool, "--id", "ok-id.v2_3", "--t", "1"]);
+    expect(readdirSync(spool)).toEqual(["ok-id.v2_3.json"]); // and no .tmp left behind
+  });
+
   it("refuses an empty note, two notes, a flag-shaped value, and a bad --t", async () => {
     const dir = tmp("refuse");
     const spool = join(dir, "spool");

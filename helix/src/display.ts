@@ -7,6 +7,7 @@ export const DISPLAY_TITLE_MAX = 96;
  * ellipsis. The stored value is untouched (see sensory.ts TITLE_MAX for
  * what the store itself keeps). */
 export function clip(text: string, max = DISPLAY_TITLE_MAX): string {
-  if (text.length <= max) return text;
-  return text.slice(0, Math.max(0, max - 1)).trimEnd() + "…";
+  const points = [...text]; // code points, so an emoji is never split
+  if (points.length <= max) return text;
+  return points.slice(0, Math.max(0, max - 1)).join("").trimEnd() + "…";
 }

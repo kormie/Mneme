@@ -24,7 +24,7 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
-import { defaultBufferFile, defaultSpoolDir } from "./buffer-path.js";
+import { defaultBufferFile, resolveSockPath, resolveSpoolDir } from "./buffer-path.js";
 import { loadKernel, type KernelIR } from "./kernel.js";
 import { makeEmitter, runGraph, type Emitter } from "./scheduler.js";
 import type { AnomalyFlag, AnomalyMatch } from "./anomaly.js";
@@ -181,8 +181,8 @@ interface ListenOptions {
 function defaults(): ListenOptions {
   const base = join(homedir(), ".mneme");
   return {
-    sockPath: join(base, "helix.sock"),
-    spoolDir: defaultSpoolDir(base),
+    sockPath: resolveSockPath(base),
+    spoolDir: resolveSpoolDir(base),
     bufferFile: defaultBufferFile(base),
     traceFile: join(HELIX_ROOT, "traces", "listen.json"),
     maxSlots: 64,
