@@ -39,8 +39,32 @@ export function headings(text: string): string[] {
     .filter((h): h is string => h !== undefined);
 }
 
+/**
+ * A heading-less packet — every ordinary Claude Code prompt — has no
+ * author-written summary, so its first line stands in as the title.
+ * That line is prose, and the store is meant to hold tokens, so it is
+ * clipped here at ingest: at most TITLE_MAX characters, cut back to the
+ * last word boundary, nothing appended. Headings are not clipped — the
+ * human wrote them as summaries. The clip is a named constant in a
+ * non-frozen transform stand-in, revertible in one line.
+ */
+export const TITLE_MAX = 120;
+
+export function clipTitle(line: string): string {
+  // Count code points, not UTF-16 units, so an emoji is never split.
+  const points = [...line];
+  if (points.length <= TITLE_MAX) return line;
+  const head = points.slice(0, TITLE_MAX).join("");
+  // Cut back to the last word boundary only when the limit falls inside
+  // a word; a word that ends exactly at the limit is kept whole.
+  const splitsWord = !/\s/u.test(points[TITLE_MAX] ?? " ");
+  const cut = splitsWord ? head.search(/\s\S*$/u) : head.length;
+  return (cut > 0 ? head.slice(0, cut) : head).trimEnd();
+}
+
 export function firstLine(text: string): string | null {
-  return text.split("\n").find((l) => l.trim() !== "")?.trim() ?? null;
+  const line = text.split("\n").find((l) => l.trim() !== "")?.trim();
+  return line === undefined ? null : clipTitle(line);
 }
 
 export function sensoryAppliers(): Appliers {

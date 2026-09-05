@@ -4,13 +4,19 @@ Adapters are how the world reaches MNEME's sensory layer (brief §6: L0
 stores = adapters, buffer, tools). An adapter observes one channel and
 pushes **Observation packets**; the listener (`src/listen.ts`) accepts
 them, feeds each batch to pg-s2w's declared ingress `raw`, and appends
-the clean packets to a local sensory buffer file. That is the whole
-loop. Nothing here commits long-term memory, and nothing here reads
-anything back out — committing what the buffer holds is a separate,
-operator-initiated tray drain (see "Draining the buffer into memory").
+the clean packets to a local sensory buffer file. When no listener is
+running, the adapter spools the packet instead and the operator's
+`bun run dogfood` runs that same pg-s2w pass over the spool before it
+drains (see "Draining the buffer into memory"). That is the whole loop.
+Nothing here commits long-term memory, and nothing here reads anything
+back out — committing what the buffer holds is a separate,
+operator-initiated tray drain.
 
 This ships one real adapter — Claude Code hooks — plus the `file`
-channel the desk tray already uses ([DOGFOOD.md](DOGFOOD.md)).
+channel the desk tray already uses ([DOGFOOD.md](DOGFOOD.md)), and one
+sensor with a hand on the button: `bun run remember`, which spools a
+single `agent-note` packet on the `claude-code` channel and stops
+(DOGFOOD.md, "Agent notes").
 
 ## The Observation packet
 
@@ -37,7 +43,7 @@ The packet is the concrete shape this slice gives the kernel's opaque
 `RawPacket` type on pg-s2w's ingress. It is a projection of the IR, not
 an extension: the loader still mirrors `spec/kernel.json` verbatim.
 
-## Starting the listener
+## Starting the listener (optional)
 
 ```sh
 cd helix
@@ -52,6 +58,16 @@ packets to `~/.mneme/buffer.jsonl`, and writes a `mneme.trace/v1` to
 `--spool`, `--buffer`, `--out`, `--max-slots`, and `--once` (drain the
 spool one time, write the trace, and exit — useful without a daemon).
 
+The listener is optional. With no listener up, the hook spools every
+packet, and `bun run dogfood` sweeps the spool through the identical
+pg-s2w pass into the same buffer before it drains — so the daily loop
+needs nothing long-running. Run the listener when you want packets
+buffered as they arrive (and `helix/traces/listen.json` written per
+batch) rather than at the next dogfood run. Both may sweep the same
+spool at once; delivery is at-least-once, a sweeper that finds a file
+already consumed simply moves on, and memory is keyed by packet id, so
+a packet both saw is buffered once and drained idempotently.
+
 Every batch is one pg-s2w invocation: normalize → salience → anomaly →
 gate → bind, with the same deterministic secrets quarantine as the tray
 (`src/anomaly.ts`). A quarantined packet version is dropped entirely —
@@ -62,17 +78,19 @@ an install, ack, or mint ever appears.
 
 ## Draining the buffer into memory
 
-The listener only fills the L0 buffer; nothing becomes long-term memory
-until the operator says so. The hook never commits, the listener never
+The listener (or the dogfood sweep standing in for it) only fills the
+L0 buffer; nothing becomes long-term memory until the operator says so.
+The hook never commits, the listener never commits, the sweep never
 commits — committing is a tray run over what the buffer holds. The
-Monday-afternoon loop is listen (already running) plus one operator
-command ([DOGFOOD.md](DOGFOOD.md)):
+Monday-afternoon loop is the hook plus one operator command
+([DOGFOOD.md](DOGFOOD.md)):
 
 ```sh
 cd helix
-bun run dogfood                            # buffer first, inbox fallback,
-                                           # then judge the emitted trace
+bun run dogfood                            # sweep the spool, drain buffer
+                                           # and inbox together, then judge
 bun run tray --buffer ~/.mneme/buffer.jsonl   # or drain just the buffer
+                                              # (no sweep)
 ```
 
 The drain feeds the buffered packets through exactly the write path
@@ -96,7 +114,17 @@ re-draining afterwards changes nothing.
 
 The adapter is `adapters/claude-code/hook.mjs` — dependency-free Node.
 Add both events to `~/.claude/settings.json`, with the absolute path to
-your clone:
+your clone. `bun run hook-snippet` prints exactly this block with your
+clone's path filled in (it prints only; it never edits `~/.claude`), and
+`bun run install-hook --write` merges it into that file for you —
+idempotent, every other key and hook preserved, the previous file kept
+as `settings.json.bak`; without `--write` it only shows what it would
+do, and an agent never passes `--write` on its own. Either is worth
+using, because a hook with a wrong path exits 0 like every other
+failure and captures nothing, silently. `bun run status` the next
+morning confirms packets arrived (`--json` for a fleet check).
+`scripts/install-tray.sh --hook` does the whole install for one person,
+non-interactively, so a fleet tool can run it as the user.
 
 ```json
 {
@@ -140,11 +168,17 @@ identity check on the exact prompt text (trimmed), not prose parsing,
 and no further strings join that check without the steward. The
 hook writes the packet to the socket and exits 0; if the socket is down
 it spools the packet as one JSON file under `~/.mneme/spool` and still
-exits 0 — the listener drains the spool when it is next up. A hook must
+exits 0 — the listener drains the spool when it is next up, or `bun run
+dogfood` sweeps it at the next run. The spool file is written under a
+`.tmp` name and renamed into place, so a sweep never reads a
+half-written packet; a file a sweep could not parse is renamed `.bad`
+and can be retried by removing that suffix. A hook must
 never break the tool it observes, so every failure path exits 0, and it
 prints nothing to stdout (on `UserPromptSubmit`, hook stdout would be
 injected into the model's context). Environment overrides: `MNEME_SOCK`
-and `MNEME_SPOOL`.
+and `MNEME_SPOOL` — honoured by the hook, `remember`, the listener,
+`--dogfood`'s sweep, and `--status` alike, so a relocated spool is swept
+wherever it was relocated to.
 
 ## Forbidden scrape
 
@@ -172,6 +206,9 @@ assignment is quarantined at the gate.
 hook only *observes*; it does not query memory and inject context back
 into the session. That read path (query → hybrid → rerank → inject,
 under Core) exists in the tray's `--ask`, and wiring it into the hook is
-a separate, steward-gated step. Also out of scope here: twins, DEM, ADL,
-desktop or Codex adapters, service units, and any rewrite of the
+a separate, steward-gated step — written up, with the other things the
+daily loop wants and this slice must not build alone (a packet `origin`
+naming the repository a prompt came from, a git commit-message channel),
+in [PROPOSALS.md](PROPOSALS.md). Also out of scope here: twins, DEM,
+ADL, desktop or Codex adapters, service units, and any rewrite of the
 TypeScript runtime — the behaviour above is the whole loop.

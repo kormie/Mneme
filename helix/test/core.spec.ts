@@ -344,6 +344,7 @@ describe("the CLI loads the Core before any drain", () => {
     try {
       await run("bun", [
         TRAY, "--dogfood",
+        "--spool", join(dir, "no-spool"),
         "--buffer", bufferFile,
         "--inbox", join(dir, "no-inbox"),
         "--store", storeFile,
@@ -376,6 +377,7 @@ describe("the CLI loads the Core before any drain", () => {
     const outFile = join(dir, "trace.json");
     const { stdout } = await run("bun", [
       TRAY, "--dogfood",
+      "--spool", join(dir, "no-spool"),
       "--buffer", bufferFile,
       "--inbox", join(dir, "no-inbox"),
       "--store", storeFile,

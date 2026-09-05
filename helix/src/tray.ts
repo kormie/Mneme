@@ -20,24 +20,31 @@
  * honour. An empty Core constrains nothing — every commit passes, one
  * core.permit per store.write, exactly as before a constitution existed.
  */
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { basename, dirname, join, resolve } from "node:path";
-import { defaultBufferFile } from "./buffer-path.js";
+import { dirname, join, resolve } from "node:path";
+import { defaultBufferFile, resolveSockPath, resolveSpoolDir } from "./buffer-path.js";
 import {
   coreSnapshot,
   defaultCoreFile,
   loadCore,
   type CoreFile,
 } from "./core.js";
+import { clip } from "./display.js";
+import { hookCommand } from "./hook-install.js";
+import { renderJournal } from "./journal.js";
 import { judge, type Judgement } from "./judge.js";
 import { loadKernel, type KernelIR } from "./kernel.js";
+import { drainSpool, processBatch } from "./listen.js";
 import { makeEmitter, runGraph, type Appliers, type Emitter } from "./scheduler.js";
 import { type AnomalyFlag, type AnomalyMatch } from "./anomaly.js";
-import { parseObservation, type Observation } from "./observation.js";
+import { type Observation } from "./observation.js";
 import { sensoryAppliers, type SensedObs } from "./sensory.js";
-import { temporalQuery, type ObservationInterval } from "./temporal-query.js";
+import { scanBufferFile, scanBufferText, scanInbox } from "./sources.js";
+import { printStatus, trayStatus } from "./status.js";
+import { describeInterval, temporalQuery, type ObservationInterval } from "./temporal-query.js";
+import { writeTrace } from "./trace-io.js";
 import {
   loadStore,
   saveStore,
@@ -58,6 +65,11 @@ import {
   type TraceFile,
 } from "./trace.js";
 
+// Re-exported for callers that learned them here (tests, the listener's
+// former import); the definitions moved to trace-io.ts and sources.ts so
+// the tray, the listener, and --status can share them without cycles.
+export { scanInbox, writeTrace };
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HELIX_ROOT = resolve(HERE, "..");
 const SPEC_ROOT = resolve(HELIX_ROOT, "../spec");
@@ -72,9 +84,64 @@ export interface Hit {
   note: string;
   title: string;
   score: number;
+  /** The query tokens this note matched (exactly or by prefix). */
   matched: string[];
+  /** For each matched query token, the stored token it matched — the
+   * same word for an exact hit, a longer one for a prefix hit
+   * ("deploy" → "deployment"). Display only. */
+  via?: Record<string, string>;
+  /** For each quoted phrase in the ask: "adjacent" when the folded phrase
+   * appears as-is in the note id, title, or a heading; "all-words" when
+   * every word is present but adjacency cannot be checked (body prose is
+   * never stored). A note missing any word of a phrase is not a hit. */
+  phrases?: Record<string, "adjacent" | "all-words">;
   triples: Triple[];
   observationTimeMs?: number;
+}
+
+export interface Phrase {
+  /** Folded, single-spaced phrase text, for adjacency checks. */
+  text: string;
+  /** Its content words (stopwords out), each required. */
+  tokens: string[];
+}
+
+/** Folded, punctuation-free, single-spaced — the one normal form both a
+ * phrase and the strings it is checked against go through, so a phrase
+ * typed exactly as a punctuated title is adjacent. */
+function phraseText(text: string): string {
+  return fold(text).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+/** Pull "quoted spans" out of a question. Unbalanced quotes are plain
+ * text. A phrase made only of stopwords ("last week" as words someone
+ * wrote) has no content words to look for in the keyword bag, so it can
+ * only match adjacently in a name, title, or heading. */
+export function extractPhrases(question: string): { phrases: Phrase[]; rest: string } {
+  const phrases: Phrase[] = [];
+  const rest = question.replace(/"([^"]*)"/gu, (_m, span: string) => {
+    const text = phraseText(span);
+    if (text !== "") phrases.push({ text, tokens: queryTokens(span) });
+    return " ";
+  });
+  return { phrases, rest };
+}
+
+/** A word in the note's name, title, or a heading counts double; a word
+ * from the body keyword bag counts once. Named so the digest can say so. */
+const STRONG_WEIGHT = 2;
+const WEAK_WEIGHT = 1;
+/** A query token at least this long also matches stored tokens it
+ * prefixes ("deploy" finds "deployment"); shorter ones match exactly. */
+const PREFIX_MIN = 4;
+
+/** Triple predicates that describe provenance, not content. They never
+ * enter the lexical haystack: "claude", "code", "user", "prompt" and
+ * "file" must not match every entry of a channel. */
+const METADATA_PREDICATES = new Set(["channel", "kind", "observation-time-ms"]);
+
+function tokenMatches(query: string, stored: string): boolean {
+  return stored === query || (query.length >= PREFIX_MIN && stored.startsWith(query));
 }
 
 /** Accent-folded (NFKD, marks stripped) so "réunion" matches "reunion". */
@@ -86,16 +153,24 @@ function tokens(text: string): string[] {
   return [...new Set(fold(text).split(/[^\p{L}\p{N}]+/u).filter((t) => t.length >= 3))];
 }
 
-/** Question words carry no signal; drop them from queries, not haystacks. */
+/** Question words carry no signal; drop them from queries, not haystacks.
+ * Shared with bodyKeywords, so this list changes what the store keeps —
+ * grow QUERY_ONLY_STOPWORDS instead for words that are only noise in a
+ * question. */
 const STOPWORDS = new Set([
   "what", "when", "where", "which", "who", "whom", "why", "how", "did", "does",
   "do", "the", "and", "for", "with", "about", "was", "were", "are", "you",
   "your", "have", "has", "had", "this", "that", "note", "notes", "write",
-  "wrote", "written", "say", "said", "happened", "last", "week",
+  "wrote", "written", "say", "said", "happened",
 ]);
 
+/** Words that are noise in a question but may be content in a note
+ * ("ask" in a note about asking). Never applied to bodyKeywords, so
+ * stored triples are unaffected. */
+const QUERY_ONLY_STOPWORDS = new Set(["ask", "asked", "asking", "tell", "told", "show", "find", "remember"]);
+
 function queryTokens(text: string): string[] {
-  return tokens(text).filter((t) => !STOPWORDS.has(t));
+  return tokens(text).filter((t) => !STOPWORDS.has(t) && !QUERY_ONLY_STOPWORDS.has(t));
 }
 
 /** Store files are user-visible JSON and legacy/malformed fields must not
@@ -292,52 +367,113 @@ export function trayAppliers(
 
     // --- pg-w2l read path: question → hits over the local store ------
     "pg-w2l/query": (inputs) => {
-      const slots = inputs.slots as { text: string; asOf?: string }[];
+      const slots = inputs.slots as { text: string; asOf?: string; utcOffset?: string }[];
       const text = slots.map((s) => s.text).join(" ");
+      // The period phrase is recognised first and excised, so its own
+      // words ("yesterday", a date literal) never become lexical
+      // requirements on the notes. Then quoted spans become phrases —
+      // every word required — and the rest is the any-match word list.
+      // Quoted spans come out first so a period written in quotes ("last
+      // week", as words someone wrote) is a phrase, not a filter; the
+      // period is then recognised on what remains.
+      const { phrases, rest } = extractPhrases(text);
+      const temporal = temporalQuery(rest, slots[0]?.asOf, slots[0]?.utcOffset);
       return {
         query: {
-          tokens: queryTokens(text),
-          temporal: temporalQuery(text, slots[0]?.asOf),
+          tokens: queryTokens(temporal.residual),
+          phrases,
+          temporal,
           indexes: ["episodic", "semantic"],
         },
       };
     },
     "pg-w2l/hybrid": (inputs, ctx) => {
-      const query = inputs.query as { tokens: string[]; temporal: { interval?: ObservationInterval } };
+      const query = inputs.query as {
+        tokens: string[];
+        phrases: Phrase[];
+        temporal: { interval?: ObservationInterval };
+      };
       const episodic = inputs.episodic as Episode[];
       const semantic = inputs.semantic as Triple[];
       ctx.emit({ type: "store.read", store: "episodic", keys: episodic.map((e) => e.id) });
       ctx.emit({ type: "store.read", store: "semantic", keys: [...new Set(semantic.map((t) => t.s))] });
+      // Deterministic lexical scoring in the declared hybrid transform.
+      // Two haystacks per note: the strong one is what the human wrote as
+      // a name or summary (note id, title, headings); the weak one is the
+      // stored body keyword bag. Provenance triples never take part.
       const hits: Hit[] = episodic
         .map((ep) => {
           const ts = semantic.filter((t) => t.s === ep.note);
-          const haystack = tokens(
-            [ep.note, ep.title, ...ep.headings, ...ts.map((t) => t.o)].join(" "),
+          const strong = tokens([ep.note, ep.title, ...ep.headings].join(" "));
+          const weak = tokens(
+            ts.filter((t) => !METADATA_PREDICATES.has(t.p)).map((t) => t.o).join(" "),
           );
-          const matched = query.tokens.filter((q) => haystack.includes(q));
+          let score = 0;
+          const matched: string[] = [];
+          const via: Record<string, string> = {};
+          const scoreToken = (q: string): boolean => {
+            const strongHit = strong.find((sTok) => tokenMatches(q, sTok));
+            const weakHit = strongHit === undefined ? weak.find((wTok) => tokenMatches(q, wTok)) : undefined;
+            const hit = strongHit ?? weakHit;
+            if (hit === undefined) return false;
+            if (matched.includes(q)) return true; // scored once, however often it is asked
+            score += strongHit !== undefined ? STRONG_WEIGHT : WEAK_WEIGHT;
+            matched.push(q);
+            via[q] = hit;
+            return true;
+          };
+          for (const q of query.tokens) scoreToken(q);
+          // A quoted phrase requires every one of its words. Adjacency can
+          // only be checked against what is stored as a string — the
+          // note id, title, and headings — because body prose never
+          // persists; a phrase found only in the keyword bag is reported
+          // as "all words", never claimed as adjacent.
+          const phrases: Record<string, "adjacent" | "all-words"> = {};
+          let phrasesSatisfied = true;
+          const strings = [ep.note, ep.title, ...ep.headings].map(phraseText);
+          for (const ph of query.phrases) {
+            // Adjacent means the phrase's words in order, as whole words:
+            // "review" is not inside "previews".
+            const adjacent = strings.some((x) => ` ${x} `.includes(` ${ph.text} `));
+            const allWords = ph.tokens.length > 0 && ph.tokens.map(scoreToken).every(Boolean);
+            if (adjacent) {
+              score += STRONG_WEIGHT;
+              phrases[ph.text] = "adjacent";
+            } else if (allWords) {
+              phrases[ph.text] = "all-words";
+            } else {
+              phrasesSatisfied = false;
+            }
+          }
           const observationTimeMs = validObservationTime(ep.observationTimeMs);
           return {
             note: ep.note,
             title: ep.title,
-            score: matched.length,
+            score: phrasesSatisfied ? score : -1,
             matched,
+            ...(matched.length === 0 ? {} : { via }),
+            ...(Object.keys(phrases).length === 0 ? {} : { phrases }),
             triples: ts,
             ...(observationTimeMs === undefined ? {} : { observationTimeMs }),
           };
         })
         .filter((h) => {
+          if (h.score < 0) return false; // a required phrase was missing
           const interval = query.temporal.interval;
           if (interval !== undefined) {
             if (h.observationTimeMs === undefined) return false;
             if (h.observationTimeMs < interval.startMs || h.observationTimeMs >= interval.endMs) return false;
           }
-          return query.tokens.length === 0 ? interval !== undefined : h.score > 0;
+          return query.tokens.length === 0 && query.phrases.length === 0
+            ? interval !== undefined
+            : h.score > 0;
         })
+        // Score, then newest observation first (undated last), then note
+        // id: the same total order for every ask, so "what did I say
+        // about X" surfaces the latest occurrence.
         .sort((a, b) =>
           b.score - a.score ||
-          (query.temporal.interval === undefined
-            ? 0
-            : (b.observationTimeMs ?? 0) - (a.observationTimeMs ?? 0)) ||
+          (b.observationTimeMs ?? -Infinity) - (a.observationTimeMs ?? -Infinity) ||
           (a.note < b.note ? -1 : a.note > b.note ? 1 : 0)
         );
       return { hits };
@@ -507,11 +643,32 @@ function runChecks(kernel: KernelIR, trace: TraceFile): Checks {
   };
 }
 
+/** Key-order-independent JSON, so a reloaded entry and a freshly built
+ * one compare by content, not by field order. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 export interface TrayReport {
   notes: string[];
   quarantined: AnomalyMatch[];
   deferred: string[];
+  /** Packets the gate scored 0 (session punctuation): observed in L0,
+   * never bound into a slot, never proposed for memory. */
+  observedOnly: string[];
   committed: string[];
+  /** `committed` partitioned against what the store held before this
+   * drain: first seen, re-written with different content, or re-written
+   * byte-for-byte the same (a re-drained buffer). Every write still
+   * consumed its own core.permit — this is a report, never a gate. */
+  fresh: string[];
+  replaced: string[];
+  unchanged: string[];
   /** Notes that reached the write path but whose commits Core refused
    * (core.deny + core.interrupt, both items — this drain wrote nothing
    * for them; an entry an earlier drain committed, if any, remains
@@ -546,28 +703,6 @@ export function permitPairing(
   return pairs;
 }
 
-/**
- * Scan an inbox directory for the `file` channel: every markdown note,
- * one packet each. A missing directory or an empty one is an ordinary
- * state here (no packets), not an error — explicit `--inbox` mode layers
- * its own error on top via readInbox.
- */
-export function scanInbox(inboxDir: string): Observation[] {
-  let files: string[];
-  try {
-    files = readdirSync(inboxDir).filter((f) => f.endsWith(".md")).sort();
-  } catch {
-    return [];
-  }
-  return files.map((f) => ({
-    id: basename(f),
-    t: Math.floor(statSync(join(inboxDir, f)).mtimeMs),
-    channel: "file",
-    kind: "note",
-    text: readFileSync(join(inboxDir, f), "utf8"),
-  }));
-}
-
 /** The `file` channel: every markdown note in the inbox, one packet each. */
 export function readInbox(inboxDir: string): Observation[] {
   const packets = scanInbox(inboxDir);
@@ -594,49 +729,43 @@ export function readBuffer(
   return scan;
 }
 
-function scanBufferText(text: string): { packets: Observation[]; skipped: number } {
-  const byId = new Map<string, Observation>();
-  let skipped = 0;
-  for (const line of text.split("\n")) {
-    if (line.trim() === "") continue;
-    const packet = parseObservation(line);
-    if (packet === null) skipped += 1;
-    else byId.set(packet.id, packet);
-  }
-  return { packets: [...byId.values()], skipped };
+export interface DogfoodSource {
+  /** Buffer packets first (in buffer order), then inbox notes (by name). */
+  packets: Observation[];
+  fromBuffer: number;
+  fromInbox: number;
+  /** Non-packet buffer lines ignored. */
+  skipped: number;
 }
 
-export type DogfoodSource =
-  | { kind: "buffer"; packets: Observation[]; skipped: number }
-  | { kind: "inbox"; packets: Observation[] }
-  | { kind: "nothing"; skipped: number };
-
 /**
- * Resolve the dogfood ingest source (DOGFOOD.md): the L0 sensory buffer
- * when it holds packets, else the documented inbox default, else
- * nothing. Unlike the explicit --buffer/--inbox modes, an absent or
- * empty source is an ordinary Monday, not an error: the caller prints
- * "nothing to drain" and invents no write.
+ * Resolve the dogfood ingest sources (DOGFOOD.md): everything the L0
+ * sensory buffer holds and every markdown note in the inbox, drained
+ * together in one run — a day's typed prompts and a day's dropped notes
+ * are one backlog. Unlike the explicit --buffer/--inbox modes, absent or
+ * empty sources are an ordinary Monday, not an error: the caller prints
+ * "nothing to drain" and invents no write. Ids never collide across the
+ * two channels (packet ids versus note filenames), so nothing is counted
+ * twice.
  */
 export function dogfoodSource(bufferFile: string, inboxDir: string): DogfoodSource {
-  let text: string | null;
-  try {
-    text = readFileSync(bufferFile, "utf8");
-  } catch {
-    text = null;
-  }
-  const scan = text === null ? { packets: [], skipped: 0 } : scanBufferText(text);
-  if (scan.packets.length > 0) return { kind: "buffer", ...scan };
+  const scan = scanBufferFile(bufferFile);
   const notes = scanInbox(inboxDir);
-  if (notes.length > 0) return { kind: "inbox", packets: notes };
-  return { kind: "nothing", skipped: scan.skipped };
+  return {
+    packets: [...scan.packets, ...notes],
+    fromBuffer: scan.packets.length,
+    fromInbox: notes.length,
+    skipped: scan.skipped,
+  };
 }
 
 /**
  * Drain one batch of Observation packets into long-term memory: pg-s2w
  * (anomaly gate included) → pg-w2l (one core.permit per store.write) →
  * pg-audit. Both ingest sources — the markdown inbox and the sensory
- * buffer — end up here, so there is exactly one write path.
+ * buffer — end up here, so there is exactly one write path. A caller
+ * may hand in an emitter that already holds events (the dogfood spool
+ * sweep does), so one operator command yields one trace file.
  */
 export function drainPackets(
   raw: Observation[],
@@ -644,41 +773,96 @@ export function drainPackets(
   core: CoreFile,
   kernel: KernelIR = loadKernel(),
   maxSlots = 64,
+  emitter: Emitter = makeEmitter(),
 ): TrayReport {
+  if (!Number.isInteger(maxSlots) || maxSlots < 1) {
+    throw new Error(`working-memory budget must be a positive integer, got ${maxSlots}`);
+  }
   const store = loadStore(storeFile);
-  const emitter = makeEmitter();
+  // What memory held before this drain, per key, for the digest's
+  // new / replaced / unchanged classification below.
+  const before = new Map<string, string>();
+  for (const [k, v] of Object.entries(store.episodic)) before.set(`episodic:${k}`, canonical(v));
+  for (const [k, v] of Object.entries(store.semantic)) before.set(`semantic:${k}`, canonical(v));
   const appliers = trayAppliers(kernel, emitter, store, core);
   const identity = coreSnapshot(core);
+  const firstEvent = emitter.events.length;
 
-  const s2w = runGraph(
-    kernel,
-    "pg-s2w",
-    { raw, identity, slot_schema: { maxSlots } },
-    appliers,
-    emitter,
-  );
-  const slots = s2w.get("bind")?.slots as { obs: SensedObs }[];
-  const deferred = (s2w.get("bind")?.dropped ?? []) as string[];
-  const flag = s2w.get("anomaly")?.flag as AnomalyFlag | null;
+  // Working memory is a declared budget per pg-s2w invocation
+  // (slot_schema.maxSlots), so a backlog larger than the budget is
+  // perceived in batches: one sensory→working pass and one
+  // working→long-term pass per `maxSlots` packets, in source order,
+  // never reordered and never pre-filtered against the store. Nothing
+  // past the budget is dropped: a week of buffered prompts drains in
+  // ceil(n / maxSlots) rounds of the same declared graphs. pg-audit runs
+  // once, after the last round, so brief §9's rule — after prompt.audit,
+  // no store.write except audit.inbox — holds by construction.
+  const batches: Observation[][] = [];
+  for (let i = 0; i < raw.length; i += maxSlots) batches.push(raw.slice(i, i + maxSlots));
+  if (batches.length === 0) batches.push([]);
 
-  const w2l = runGraph(
-    kernel,
-    "pg-w2l",
-    { trace: { slots }, traces: [{ slots }], identity },
-    appliers,
-    emitter,
-  );
-  const worked = (w2l.get("episode")?.episodes ?? []) as Episode[];
-  const triples = (w2l.get("semantic")?.triples ?? []) as Triple[];
-  // What actually persisted is what the trace's episodic writes name;
+  const quarantined: AnomalyMatch[] = [];
+  const deferred: string[] = [];
+  const observedOnly: string[] = [];
+  const worked: Episode[] = [];
+  const triples: Triple[] = [];
+  for (const batch of batches) {
+    const s2w = runGraph(
+      kernel,
+      "pg-s2w",
+      { raw: batch, identity, slot_schema: { maxSlots } },
+      appliers,
+      emitter,
+    );
+    const slots = (s2w.get("bind")?.slots ?? []) as { obs: SensedObs }[];
+    // The bind stand-in's dropped port is still reported honestly; with
+    // batches no larger than the budget it stays empty.
+    deferred.push(...((s2w.get("bind")?.dropped ?? []) as string[]));
+    const flag = s2w.get("anomaly")?.flag as AnomalyFlag | null;
+    quarantined.push(...(flag?.matches ?? []));
+    // Packets that were neither quarantined, deferred, nor bound: the gate
+    // scored them 0 (session punctuation). Observed in L0, never memory —
+    // reported, so the digest's counts add up.
+    const bound = new Set(slots.map((s) => s.obs.id));
+    const flagged = new Set(flag?.notes ?? []);
+    const dropped = new Set((s2w.get("bind")?.dropped ?? []) as string[]);
+    observedOnly.push(
+      ...batch.map((p) => p.id).filter((id) => !bound.has(id) && !flagged.has(id) && !dropped.has(id)),
+    );
+
+    const w2l = runGraph(
+      kernel,
+      "pg-w2l",
+      { trace: { slots }, traces: [{ slots }], identity },
+      appliers,
+      emitter,
+    );
+    worked.push(...((w2l.get("episode")?.episodes ?? []) as Episode[]));
+    triples.push(...((w2l.get("semantic")?.triples ?? []) as Triple[]));
+  }
+  // What actually persisted is what this drain's episodic writes name;
   // a note Core denied worked through the graph but was never written.
   const written = new Set(
     emitter.events
+      .slice(firstEvent)
       .filter((e) => e.type === "store.write" && e.store === "episodic")
       .flatMap((e) => (e.type === "store.write" ? e.keys : [])),
   );
   const episodes = worked.filter((e) => written.has(e.id));
   const denied = worked.filter((e) => !written.has(e.id)).map((e) => e.note);
+  const fresh: string[] = [];
+  const replaced: string[] = [];
+  const unchanged: string[] = [];
+  for (const ep of episodes) {
+    const prevEpisode = before.get(`episodic:${ep.id}`);
+    const prevSemantic = before.get(`semantic:${ep.note}`);
+    if (prevEpisode === undefined) fresh.push(ep.note);
+    else if (
+      prevEpisode === canonical(store.episodic[ep.id]) &&
+      prevSemantic === canonical(store.semantic[ep.note])
+    ) unchanged.push(ep.note);
+    else replaced.push(ep.note);
+  }
 
   const audit = runGraph(
     kernel,
@@ -694,9 +878,13 @@ export function drainPackets(
   const trace = makeTraceFile(kernel.spec, emitter.events);
   return {
     notes: raw.map((p) => p.id),
-    quarantined: flag?.matches ?? [],
+    quarantined,
     deferred,
+    observedOnly,
     committed: episodes.map((e) => e.note),
+    fresh,
+    replaced,
+    unchanged,
     denied,
     episodes,
     triples,
@@ -734,6 +922,7 @@ export function runAsk(
   core: CoreFile,
   kernel: KernelIR = loadKernel(),
   asOf?: string,
+  utcOffset?: string,
 ): AskReport {
   const store = loadStore(storeFile);
   const episodic = Object.keys(store.episodic).sort().map((k) => store.episodic[k]!);
@@ -745,7 +934,12 @@ export function runAsk(
     kernel,
     "pg-w2l",
     {
-      slots: [{ id: "slot:ask", text: question, ...(asOf === undefined ? {} : { asOf }) }],
+      slots: [{
+        id: "slot:ask",
+        text: question,
+        ...(asOf === undefined ? {} : { asOf }),
+        ...(utcOffset === undefined ? {} : { utcOffset }),
+      }],
       identity: coreSnapshot(core),
       episodic,
       semantic,
@@ -771,11 +965,6 @@ export function runAsk(
       ? 0
       : episodic.filter((ep) => validObservationTime(ep.observationTimeMs) === undefined).length,
   };
-}
-
-export function writeTrace(trace: TraceFile, outFile: string): void {
-  mkdirSync(dirname(outFile), { recursive: true });
-  writeFileSync(outFile, JSON.stringify(trace, null, 2) + "\n");
 }
 
 function checksOk(checks: Checks): boolean {
@@ -816,16 +1005,33 @@ function printDrainDigest(
       `deferred (working-memory budget reached — ingest these separately): ${report.deferred.join(", ")}`,
     );
   }
+  if (report.observedOnly.length > 0) {
+    console.log(
+      `observed only (salience 0 — session punctuation, never bound, never memory): ${report.observedOnly.length}`,
+    );
+  }
   if (report.denied.length > 0) {
     console.log(
       "denied by Core (this drain wrote nothing for these; a previously committed version, if any, is still remembered):",
     );
     for (const n of report.denied) console.log(`  x ${n}`);
   }
-  console.log("committed:");
+  // A re-drained buffer re-commits everything it holds, each write under
+  // its own permit; the digest lists what changed and counts the rest.
+  const unchanged = new Set(report.unchanged);
+  const replaced = new Set(report.replaced);
+  console.log(
+    `committed: ${report.committed.length} (${report.fresh.length} new, ` +
+      `${report.replaced.length} replaced, ${report.unchanged.length} unchanged)`,
+  );
   for (const ep of report.episodes) {
+    if (unchanged.has(ep.note)) continue;
     const t = report.triples.filter((x) => x.s === ep.note).length;
-    console.log(`  - ${ep.note} [${ep.channel ?? "file"}]: "${ep.title}" → ${t} triples`);
+    const tag = replaced.has(ep.note) ? " (replaced)" : "";
+    console.log(`  - ${ep.note} [${ep.channel ?? "file"}]: "${clip(ep.title)}" → ${t} triples${tag}`);
+  }
+  if (report.unchanged.length > 0) {
+    console.log(`  = ${report.unchanged.length} already remembered, re-committed unchanged (one permit each)`);
   }
   console.log(`memory: ${storeFile}`);
   console.log(`audit: pg-w2l prompt corpus, ${report.auditFlags} heuristic flags → steward inbox`);
@@ -864,40 +1070,106 @@ function livenessRows(j: Judgement): { id: string; lean: string; status: string 
   return j.rows.filter((r) => r.liveness).map((r) => ({ id: r.id, lean: r.lean, status: r.status }));
 }
 
+export interface SweepReport {
+  /** Spooled packet ids the sweep consumed (files deleted). */
+  spooled: string[];
+  /** Ids appended to the buffer (everything the gate did not quarantine). */
+  accepted: string[];
+  quarantined: AnomalyMatch[];
+}
+
 /**
- * The Monday-afternoon operator command (DOGFOOD.md): resolve the source
- * (buffer, else inbox), drain it through the one permit-gated write
- * path, judge the emitted trace with the untrusted judge, and print the
- * three dogfood prompts. Returns the process exit code: 0 when the
- * drain's checks and the judge's safety laws hold (the two liveness
- * gaps must stay red — a green one means a stuffed trace); 1 otherwise.
+ * Sweep the hook's spool into the L0 buffer: the listener's own `--once`
+ * pass, run here so the daily loop needs no daemon. The hook spools a
+ * packet whenever no listener answers its socket; each spooled packet
+ * rides pg-s2w (anomaly gate included) exactly as the listener would
+ * run it — under the Core-free sensory identity, since the sensory
+ * boundary never loads the Core — and the clean ones are appended to
+ * the buffer the drain then reads and re-screens under the loaded Core.
+ * A quarantined version is dropped: never buffered, never logged
+ * verbatim. Nothing here commits; the sweep only fills L0. An absent or
+ * empty spool is an ordinary state (no packets), not an error.
+ */
+export function sweepSpool(
+  kernel: KernelIR,
+  spoolDir: string,
+  bufferFile: string,
+  emitter: Emitter,
+  maxSlots = 64,
+): SweepReport {
+  const spooled = drainSpool(spoolDir);
+  if (spooled.length === 0) return { spooled: [], accepted: [], quarantined: [] };
+  const batch = processBatch(kernel, spooled, emitter, bufferFile, maxSlots);
+  return {
+    spooled: spooled.map((p) => p.id),
+    accepted: batch.accepted,
+    quarantined: batch.quarantined,
+  };
+}
+
+function printSweep(sweep: SweepReport, spoolDir: string, bufferFile: string): void {
+  if (sweep.spooled.length === 0) return;
+  console.log(
+    `sweep: ${sweep.spooled.length} spooled packet(s) from ${spoolDir} → ` +
+      `${sweep.accepted.length} appended to buffer ${bufferFile} (no listener needed)`,
+  );
+  for (const q of sweep.quarantined) {
+    console.log(`  ! ${q.note}: ${q.rule} (dropped — never buffered)`);
+  }
+}
+
+/**
+ * The Monday-afternoon operator command (DOGFOOD.md): sweep the hook's
+ * spool into the buffer, resolve the sources (everything in the buffer,
+ * then every inbox note, one backlog), drain
+ * it through the one permit-gated write path, judge the emitted trace
+ * with the untrusted judge, and print the three dogfood prompts. Returns
+ * the process exit code: 0 when the drain's checks and the judge's
+ * safety laws hold (the two liveness gaps must stay red — a green one
+ * means a stuffed trace); 1 otherwise.
  */
 function runDogfood(
+  spoolDir: string,
   bufferFile: string,
   inboxDir: string,
   storeFile: string,
   outFile: string,
   core: CoreFile,
   coreLine: string,
+  maxSlots: number,
 ): number {
+  const kernel = loadKernel();
+  const emitter = makeEmitter();
+  const sweep = sweepSpool(kernel, spoolDir, bufferFile, emitter, maxSlots);
   const src = dogfoodSource(bufferFile, inboxDir);
   console.log(coreLine);
-  if (src.kind === "nothing") {
+  printSweep(sweep, spoolDir, bufferFile);
+  if (src.packets.length === 0) {
     console.log("dogfood: nothing to drain");
     console.log(`  buffer ${bufferFile}: absent or no packets` +
       (src.skipped > 0 ? ` (${src.skipped} non-packet line(s) ignored)` : ""));
     console.log(`  inbox ${inboxDir}: absent or no .md notes`);
-    console.log("nothing was written: no store.write, no trace, no invented memory");
+    if (sweep.spooled.length > 0) {
+      // The sweep scheduled pg-s2w, so its sensory-only trace is written
+      // even though nothing reached the write path.
+      writeTrace(makeTraceFile(kernel.spec, emitter.events), outFile);
+      console.log(`nothing was written to memory: no store.write, no invented memory`);
+      console.log(`trace: ${outFile} (mneme.trace/v1, sweep only — ${emitter.events.length} sensory events)`);
+    } else {
+      console.log("nothing was written: no store.write, no trace, no invented memory");
+    }
     return 0;
   }
 
-  const kernel = loadKernel();
-  const report = drainPackets(src.packets, storeFile, core, kernel);
+  const report = drainPackets(src.packets, storeFile, core, kernel, maxSlots, emitter);
   writeTrace(report.trace, outFile);
-  const sourceLine = src.kind === "buffer"
-    ? `dogfood: ${report.notes.length} packet(s) from buffer ${bufferFile}` +
-      (src.skipped > 0 ? ` (${src.skipped} non-packet line(s) skipped)` : "")
-    : `dogfood: ${report.notes.length} note(s) from inbox ${inboxDir} (buffer empty)`;
+  const parts = [
+    `${src.fromBuffer} packet(s) from buffer ${bufferFile}` +
+      (src.skipped > 0 ? ` (${src.skipped} non-packet line(s) skipped)` : "") +
+      (src.fromBuffer === 0 ? " (buffer empty)" : ""),
+    `${src.fromInbox} note(s) from inbox ${inboxDir}` + (src.fromInbox === 0 ? " (inbox empty)" : ""),
+  ];
+  const sourceLine = `dogfood: ${parts.join(" + ")}`;
   const drainOk = printDrainDigest(report, sourceLine, storeFile, outFile);
 
   console.log("");
@@ -947,6 +1219,13 @@ function runDogfood(
   return 0;
 }
 
+/** The hook block for ~/.claude/settings.json, with this clone's path. */
+export function hookSnippetJson(): string {
+  const command = hookCommand(HELIX_ROOT);
+  const entry = { hooks: [{ type: "command", command }] };
+  return JSON.stringify({ hooks: { UserPromptSubmit: [entry], Stop: [entry] } }, null, 2);
+}
+
 function main(): void {
   // Developers pipe CLI output through head/grep; a closed pipe is not an
   // error worth a stack trace.
@@ -957,28 +1236,58 @@ function main(): void {
   const args = process.argv.slice(2);
   let inbox: string | null = null;
   let buffer: string | null = null;
+  let spool: string | null = null;
   let out: string | null = null;
   let storeFile = join(HELIX_ROOT, "store", "tray.json");
   let ask: string | null = null;
+  let journal: string | null = null;
   let coreArg: string | null = null;
   let asOf: string | null = null;
+  let utcOffset: string | null = null;
+  let maxSlots: number | null = null;
+  let limit: number | null = null;
   let dogfood = false;
+  let status = false;
+  let statusJson = false;
+  let hookSnippet = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i] as string;
     if (flag === "--dogfood") {
       dogfood = true;
+    } else if (flag === "--status") {
+      status = true;
+    } else if (flag === "--json") {
+      statusJson = true;
+    } else if (flag === "--hook-snippet") {
+      hookSnippet = true;
     } else if (
-      flag === "--inbox" || flag === "--buffer" || flag === "--out" ||
-      flag === "--store" || flag === "--ask" || flag === "--core" || flag === "--as-of"
+      flag === "--inbox" || flag === "--buffer" || flag === "--spool" || flag === "--out" ||
+      flag === "--store" || flag === "--ask" || flag === "--journal" || flag === "--core" ||
+      flag === "--as-of" || flag === "--utc-offset" || flag === "--max-slots" || flag === "--limit"
     ) {
       const value = args[++i];
       if (value === undefined) throw new Error(`missing value for ${flag}`);
+      // `--ask --as-of 2026-09-05` would otherwise take "--as-of" as the
+      // question and the date as an unknown argument; a value that looks
+      // like a flag is a missing value, not a question.
+      if (value.startsWith("--")) {
+        throw new Error(`missing value for ${flag} (got the flag ${value}; put the question before other flags)`);
+      }
       if (flag === "--inbox") inbox = resolve(value);
       else if (flag === "--buffer") buffer = resolve(value);
+      else if (flag === "--spool") spool = resolve(value);
       else if (flag === "--out") out = resolve(value);
       else if (flag === "--store") storeFile = resolve(value);
       else if (flag === "--core") coreArg = resolve(value);
       else if (flag === "--as-of") asOf = value;
+      else if (flag === "--utc-offset") utcOffset = value;
+      else if (flag === "--max-slots" || flag === "--limit") {
+        if (!/^[1-9]\d*$/.test(value)) {
+          throw new Error(`${flag} must be a positive integer, got ${JSON.stringify(value)}`);
+        }
+        if (flag === "--max-slots") maxSlots = Number(value);
+        else limit = Number(value);
+      } else if (flag === "--journal") journal = value;
       else ask = value;
     } else {
       throw new Error(`unknown argument: ${flag}`);
@@ -1007,37 +1316,124 @@ function main(): void {
     ? `core: ${corePath} (values: ${core.values.join(", ")})`
     : `core: ${corePath} (empty — no constitution, every salient commit passes)`;
 
+  const modes = [
+    dogfood ? "--dogfood" : null,
+    status ? "--status" : null,
+    hookSnippet ? "--hook-snippet" : null,
+    ask !== null ? "--ask" : null,
+    journal !== null ? "--journal" : null,
+  ].filter((m): m is string => m !== null);
+  if (modes.length > 1) throw new Error(`choose one mode per run: ${modes.join(" or ")}`);
+
+  if (hookSnippet) {
+    // The settings.json block from ADAPTER.md with this clone's absolute
+    // hook path substituted. Printed, never written: the hook exits 0 on
+    // every failure by design, so a wrong path captures nothing forever
+    // with no signal — this removes the copy-and-edit step that causes it.
+    console.log(hookSnippetJson());
+    return;
+  }
+  const reading = ask !== null || journal !== null;
+  if (limit !== null && !reading) throw new Error("--limit is only valid with --ask or --journal");
+
+  if (statusJson && !status) throw new Error("--json is only valid with --status");
+  if (status) {
+    for (const [given, name] of [[asOf, "--as-of"], [utcOffset, "--utc-offset"], [out, "--out"]] as const) {
+      if (given !== null) throw new Error(`${name} is not valid with --status (inspection only)`);
+    }
+    if (maxSlots !== null) throw new Error("--max-slots is not valid with --status (inspection only)");
+    const mnemeHome = join(homedir(), ".mneme");
+    const bufferFile = buffer ?? defaultBufferFile(mnemeHome);
+    const paths = {
+      spoolDir: spool ?? resolveSpoolDir(mnemeHome),
+      bufferFile,
+      inboxDir: inbox ?? join(homedir(), "mneme-tray"),
+      storeFile,
+      // Where the hook and the listener look for the socket: MNEME_SOCK,
+      // else ~/.mneme/helix.sock — never beside a relocated buffer.
+      sockPath: resolveSockPath(mnemeHome),
+    };
+    if (statusJson) {
+      // For a fleet asking "is the loop alive on this machine": the same
+      // inspection as data. Counts and dates only, never packet text.
+      console.log(JSON.stringify({ core: { file: corePath, values: core.values }, paths, status: trayStatus(paths) }, null, 2));
+      return;
+    }
+    console.log(coreLine);
+    printStatus(trayStatus(paths), paths);
+    return;
+  }
+
   if (dogfood) {
-    if (ask !== null) throw new Error("choose one mode per run: --dogfood or --ask");
-    if (asOf !== null) throw new Error("--as-of is only valid with --ask");
-    // With --dogfood, --buffer and --inbox merely relocate the documented
-    // defaults; source preference (buffer first) stays the same.
+    if (asOf !== null) throw new Error("--as-of is only valid with --ask or --journal");
+    if (utcOffset !== null) throw new Error("--utc-offset is only valid with --ask or --journal");
+    // With --dogfood, --spool, --buffer and --inbox merely relocate the
+    // documented defaults; buffer and inbox drain together.
+    const mnemeHome = join(homedir(), ".mneme");
     process.exitCode = runDogfood(
-      buffer ?? defaultBufferFile(join(homedir(), ".mneme")),
+      spool ?? resolveSpoolDir(mnemeHome),
+      buffer ?? defaultBufferFile(mnemeHome),
       inbox ?? join(homedir(), "mneme-tray"),
       storeFile,
       out ?? join(HELIX_ROOT, "traces", "dogfood.json"),
       core,
       coreLine,
+      maxSlots ?? 64,
     );
     return;
+  }
+  if (spool !== null) {
+    throw new Error("--spool is only valid with --dogfood or --status (the single-source drains read one file)");
   }
   if (inbox !== null && buffer !== null) {
     throw new Error("choose one ingest source per run: --inbox or --buffer");
   }
-  if (asOf !== null && ask === null) {
-    throw new Error("--as-of is only valid with --ask");
+  if (asOf !== null && !reading) {
+    throw new Error("--as-of is only valid with --ask or --journal");
+  }
+  if (utcOffset !== null && !reading) {
+    throw new Error("--utc-offset is only valid with --ask or --journal");
+  }
+  if (maxSlots !== null && reading) {
+    throw new Error("--max-slots is only valid for a drain (--dogfood, --inbox, or --buffer)");
+  }
+
+  if (journal !== null) {
+    const report = runAsk(journal, storeFile, core, loadKernel(), asOf ?? undefined, utcOffset ?? undefined);
+    if (report.observationInterval === undefined) {
+      throw new Error(
+        'the journal needs a period: try "yesterday" or "this week" with --as-of YYYY-MM-DD, ' +
+          'or "on YYYY-MM-DD", or "between A and B"',
+      );
+    }
+    const outFile = out ?? join(HELIX_ROOT, "traces", "ask.json");
+    writeTrace(report.trace, outFile);
+    console.log(
+      `journal: ${describeInterval(report.observationInterval, asOf ?? undefined)} ` +
+        `— observation time [${report.observationInterval.start}, ${report.observationInterval.end}) ` +
+        `over ${report.storeNotes} remembered notes (${storeFile})`,
+    );
+    if (report.undatedExcluded > 0) {
+      console.log(`  ${report.undatedExcluded} undated or unreadable record(s) cannot appear in a journal`);
+    }
+    for (const line of renderJournal(report.hits, report.observationInterval, limit ?? undefined)) {
+      console.log(line);
+    }
+    console.log(`trace: ${outFile} (mneme.trace/v1, ${report.trace.events.length} events; read-only — no store.write, no permit needed)`);
+    console.log(`checks (untrusted TS mirrors, slice-local): ${checksOk(report.checks) ? "PASS" : "FAIL"}`);
+    if (!checksOk(report.checks)) process.exitCode = 1;
+    return;
   }
 
   if (ask !== null) {
-    const report = runAsk(ask, storeFile, core, loadKernel(), asOf ?? undefined);
+    const report = runAsk(ask, storeFile, core, loadKernel(), asOf ?? undefined, utcOffset ?? undefined);
     const outFile = out ?? join(HELIX_ROOT, "traces", "ask.json");
     writeTrace(report.trace, outFile);
     console.log(`ask: "${report.question}" over ${report.storeNotes} remembered notes (${storeFile})`);
     if (report.observationInterval !== undefined) {
       console.log(
         `  observation time: [${report.observationInterval.start}, ${report.observationInterval.end}) ` +
-        `(previous UTC calendar week; as-of ${asOf})`,
+        `— ${describeInterval(report.observationInterval, asOf ?? undefined)}`,
       );
       if (report.undatedExcluded > 0) {
         console.log(
@@ -1050,12 +1446,32 @@ function main(): void {
       console.log("  no memory yet — drop notes in the inbox and run an ingest first");
     } else if (report.hits.length === 0) {
       console.log("  no matches");
+    } else if (
+      report.observationInterval !== undefined &&
+      report.hits.every((h) => h.matched.length === 0 && h.phrases === undefined)
+    ) {
+      console.log("  tip: --journal renders a period like this as a day-by-day journal");
     }
-    for (const h of report.hits.slice(0, 5)) {
+    const shown = limit ?? 5;
+    for (const h of report.hits.slice(0, shown)) {
+      const shownMatches = h.matched.map((q) => {
+        const stored = h.via?.[q];
+        return stored === undefined || stored === q ? q : `${q}→${stored}`;
+      });
       const basis = h.matched.length > 0
-        ? `score ${h.score}; matched ${h.matched.join(", ")}`
-        : "observation time in interval";
-      console.log(`  ${h.note} — "${h.title}" (${basis})`);
+        ? `score ${h.score}; matched ${shownMatches.join(", ")}`
+        : h.phrases !== undefined
+          ? `score ${h.score}; phrase only`
+          : "observation time in interval";
+      console.log(`  ${h.note} — "${clip(h.title)}" (${basis})`);
+      for (const [text, how] of Object.entries(h.phrases ?? {})) {
+        console.log(
+          `      phrase "${text}": ` +
+            (how === "adjacent"
+              ? "adjacent in the note id, title, or a heading"
+              : "all words present in stored keywords (adjacency unknown — body prose is not stored)"),
+        );
+      }
       if (h.observationTimeMs !== undefined) {
         const channel = h.triples.find((t) => t.p === "channel")?.o;
         const label = channel === "file" ? "observed (file mtime)" : "observed (adapter clock)";
@@ -1066,8 +1482,9 @@ function main(): void {
       )) {
         console.log(`      (${t.s}, ${t.p}, ${t.o})`);
       }
+      const matchedStored = new Set(Object.values(h.via ?? {}));
       for (const t of h.triples.filter(
-        (t) => t.p === "mentions" && h.matched.includes(fold(t.o)),
+        (t) => t.p === "mentions" && matchedStored.has(fold(t.o)),
       )) {
         console.log(`      (${t.s}, ${t.p}, ${t.o})`);
       }
@@ -1080,8 +1497,8 @@ function main(): void {
         }
       }
     }
-    if (report.hits.length > 5) {
-      console.log(`  … and ${report.hits.length - 5} more note(s) in this result`);
+    if (report.hits.length > shown) {
+      console.log(`  … and ${report.hits.length - shown} more note(s) in this result (--limit N shows more)`);
     }
     console.log(`trace: ${outFile} (mneme.trace/v1, ${report.trace.events.length} events; read-only — no store.write, no permit needed)`);
     console.log(`checks (untrusted TS mirrors, slice-local): ${checksOk(report.checks) ? "PASS" : "FAIL"}`);
@@ -1093,7 +1510,7 @@ function main(): void {
   let sourceLine: string;
   if (buffer !== null) {
     const { packets, skipped } = readBuffer(buffer);
-    report = drainPackets(packets, storeFile, core);
+    report = drainPackets(packets, storeFile, core, loadKernel(), maxSlots ?? 64);
     sourceLine = `tray: ${report.notes.length} packet(s) from buffer ${buffer}` +
       (skipped > 0 ? ` (${skipped} non-packet line(s) skipped)` : "");
   } else {
@@ -1105,7 +1522,7 @@ function main(): void {
       throw new Error(`inbox not found: ${inboxDir}`);
     }
     if (!inboxStat.isDirectory()) throw new Error(`inbox is not a directory: ${inboxDir}`);
-    report = runTray(inboxDir, storeFile, core);
+    report = runTray(inboxDir, storeFile, core, loadKernel(), maxSlots ?? 64);
     sourceLine = `tray: ${report.notes.length} notes from ${inboxDir}`;
   }
   const outFile = out ?? join(HELIX_ROOT, "traces", "tray.json");

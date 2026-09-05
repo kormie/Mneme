@@ -6,7 +6,11 @@ The kernel IR is normative; types in `src/kernel.ts` mirror it, never
 extend it. `judge` (roadmap step 2) is untrusted by design (ADR-008).
 
 `src/tray.ts` is the desk-tray dogfood CLI — a local-only run of the
-scheduler over your own markdown notes. See [DOGFOOD.md](DOGFOOD.md).
+scheduler over your own markdown notes and buffered Claude Code
+prompts: `--dogfood` drains, `--ask` and `--journal` read, `--status`
+inspects, `--hook-snippet` prints the hook install block. See
+[DOGFOOD.md](DOGFOOD.md); the steward-gated asks the daily loop still
+wants are in [PROPOSALS.md](PROPOSALS.md).
 
 `src/listen.ts` is the sensory adapter loop: adapters (Claude Code hooks
 in `adapters/claude-code/`) push Observation packets over a unix socket
