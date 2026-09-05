@@ -303,6 +303,9 @@ describe("the wider period surface (calendar units, fixed offsets, absolute days
       expect(() => temporalQuery("yesterday", "2026-09-05", bad)).toThrow(/invalid --utc-offset/);
     }
     expect(() => temporalQuery("canary", undefined, "-04:00")).toThrow(/--utc-offset was given/);
+    // An explicit offset is "given" even when it equals the default.
+    expect(() => temporalQuery("canary", undefined, "+00:00")).toThrow(/--utc-offset was given/);
+    expect(interval("yesterday", "2026-09-05", "-00:00")?.utcOffset).toBe("-00:00");
   });
 
   it("refuses ambiguous or under-specified periods", () => {

@@ -135,9 +135,11 @@ function relativeInterval(label: string, anchorMs: number): Shifted {
 export function temporalQuery(
   question: string,
   asOf?: string,
-  utcOffset = "+00:00",
+  utcOffset?: string,
 ): TemporalQuery {
-  const offsetMs = parseUtcOffset(utcOffset);
+  const offsetGiven = utcOffset !== undefined;
+  const offset = utcOffset ?? "+00:00";
+  const offsetMs = parseUtcOffset(offset);
   if (asOf !== undefined) parseAsOfDate(asOf); // validate even when unused
 
   const found: { label: string; span: [number, number]; shifted?: Shifted; relative: boolean }[] = [];
@@ -190,7 +192,7 @@ export function temporalQuery(
           'on YYYY-MM-DD, between YYYY-MM-DD and YYYY-MM-DD',
       );
     }
-    if (utcOffset !== "+00:00") {
+    if (offsetGiven) {
       throw new Error("--utc-offset was given but the question names no supported period");
     }
     return { residual: question };
@@ -219,7 +221,7 @@ export function temporalQuery(
       endMs,
       start: new Date(startMs).toISOString(),
       end: new Date(endMs).toISOString(),
-      utcOffset,
+      utcOffset: offset,
     },
     residual,
   };

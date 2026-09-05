@@ -20,10 +20,10 @@
  * honour. An empty Core constrains nothing — every commit passes, one
  * core.permit per store.write, exactly as before a constitution existed.
  */
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { defaultBufferFile, defaultSpoolDir } from "./buffer-path.js";
 import {
   coreSnapshot,
@@ -31,13 +31,16 @@ import {
   loadCore,
   type CoreFile,
 } from "./core.js";
+import { clip } from "./display.js";
 import { judge, type Judgement } from "./judge.js";
 import { loadKernel, type KernelIR } from "./kernel.js";
 import { drainSpool, processBatch } from "./listen.js";
 import { makeEmitter, runGraph, type Appliers, type Emitter } from "./scheduler.js";
 import { type AnomalyFlag, type AnomalyMatch } from "./anomaly.js";
-import { parseObservation, type Observation } from "./observation.js";
+import { type Observation } from "./observation.js";
 import { sensoryAppliers, type SensedObs } from "./sensory.js";
+import { scanBufferFile, scanBufferText, scanInbox } from "./sources.js";
+import { printStatus, trayStatus } from "./status.js";
 import { describeInterval, temporalQuery, type ObservationInterval } from "./temporal-query.js";
 import { writeTrace } from "./trace-io.js";
 import {
@@ -60,10 +63,10 @@ import {
   type TraceFile,
 } from "./trace.js";
 
-// Re-exported for callers that learned it here (tests, the listener's
-// former import); the definition moved to trace-io.ts to break the
-// tray ↔ listener import cycle.
-export { writeTrace };
+// Re-exported for callers that learned them here (tests, the listener's
+// former import); the definitions moved to trace-io.ts and sources.ts so
+// the tray, the listener, and --status can share them without cycles.
+export { scanInbox, writeTrace };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HELIX_ROOT = resolve(HERE, "..");
@@ -557,28 +560,6 @@ export function permitPairing(
   return pairs;
 }
 
-/**
- * Scan an inbox directory for the `file` channel: every markdown note,
- * one packet each. A missing directory or an empty one is an ordinary
- * state here (no packets), not an error — explicit `--inbox` mode layers
- * its own error on top via readInbox.
- */
-export function scanInbox(inboxDir: string): Observation[] {
-  let files: string[];
-  try {
-    files = readdirSync(inboxDir).filter((f) => f.endsWith(".md")).sort();
-  } catch {
-    return [];
-  }
-  return files.map((f) => ({
-    id: basename(f),
-    t: Math.floor(statSync(join(inboxDir, f)).mtimeMs),
-    channel: "file",
-    kind: "note",
-    text: readFileSync(join(inboxDir, f), "utf8"),
-  }));
-}
-
 /** The `file` channel: every markdown note in the inbox, one packet each. */
 export function readInbox(inboxDir: string): Observation[] {
   const packets = scanInbox(inboxDir);
@@ -605,18 +586,6 @@ export function readBuffer(
   return scan;
 }
 
-function scanBufferText(text: string): { packets: Observation[]; skipped: number } {
-  const byId = new Map<string, Observation>();
-  let skipped = 0;
-  for (const line of text.split("\n")) {
-    if (line.trim() === "") continue;
-    const packet = parseObservation(line);
-    if (packet === null) skipped += 1;
-    else byId.set(packet.id, packet);
-  }
-  return { packets: [...byId.values()], skipped };
-}
-
 export interface DogfoodSource {
   /** Buffer packets first (in buffer order), then inbox notes (by name). */
   packets: Observation[];
@@ -637,13 +606,7 @@ export interface DogfoodSource {
  * twice.
  */
 export function dogfoodSource(bufferFile: string, inboxDir: string): DogfoodSource {
-  let text: string | null;
-  try {
-    text = readFileSync(bufferFile, "utf8");
-  } catch {
-    text = null;
-  }
-  const scan = text === null ? { packets: [], skipped: 0 } : scanBufferText(text);
+  const scan = scanBufferFile(bufferFile);
   const notes = scanInbox(inboxDir);
   return {
     packets: [...scan.packets, ...notes],
@@ -876,7 +839,7 @@ function printDrainDigest(
   console.log("committed:");
   for (const ep of report.episodes) {
     const t = report.triples.filter((x) => x.s === ep.note).length;
-    console.log(`  - ${ep.note} [${ep.channel ?? "file"}]: "${ep.title}" → ${t} triples`);
+    console.log(`  - ${ep.note} [${ep.channel ?? "file"}]: "${clip(ep.title)}" → ${t} triples`);
   }
   console.log(`memory: ${storeFile}`);
   console.log(`audit: pg-w2l prompt corpus, ${report.auditFlags} heuristic flags → steward inbox`);
@@ -1081,18 +1044,28 @@ function main(): void {
   let asOf: string | null = null;
   let utcOffset: string | null = null;
   let maxSlots: number | null = null;
+  let limit: number | null = null;
   let dogfood = false;
+  let status = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i] as string;
     if (flag === "--dogfood") {
       dogfood = true;
+    } else if (flag === "--status") {
+      status = true;
     } else if (
       flag === "--inbox" || flag === "--buffer" || flag === "--spool" || flag === "--out" ||
       flag === "--store" || flag === "--ask" || flag === "--core" || flag === "--as-of" ||
-      flag === "--utc-offset" || flag === "--max-slots"
+      flag === "--utc-offset" || flag === "--max-slots" || flag === "--limit"
     ) {
       const value = args[++i];
       if (value === undefined) throw new Error(`missing value for ${flag}`);
+      // `--ask --as-of 2026-09-05` would otherwise take "--as-of" as the
+      // question and the date as an unknown argument; a value that looks
+      // like a flag is a missing value, not a question.
+      if (value.startsWith("--")) {
+        throw new Error(`missing value for ${flag} (got the flag ${value}; put the question before other flags)`);
+      }
       if (flag === "--inbox") inbox = resolve(value);
       else if (flag === "--buffer") buffer = resolve(value);
       else if (flag === "--spool") spool = resolve(value);
@@ -1101,11 +1074,12 @@ function main(): void {
       else if (flag === "--core") coreArg = resolve(value);
       else if (flag === "--as-of") asOf = value;
       else if (flag === "--utc-offset") utcOffset = value;
-      else if (flag === "--max-slots") {
+      else if (flag === "--max-slots" || flag === "--limit") {
         if (!/^[1-9]\d*$/.test(value)) {
-          throw new Error(`--max-slots must be a positive integer, got ${JSON.stringify(value)}`);
+          throw new Error(`${flag} must be a positive integer, got ${JSON.stringify(value)}`);
         }
-        maxSlots = Number(value);
+        if (flag === "--max-slots") maxSlots = Number(value);
+        else limit = Number(value);
       } else ask = value;
     } else {
       throw new Error(`unknown argument: ${flag}`);
@@ -1134,8 +1108,30 @@ function main(): void {
     ? `core: ${corePath} (values: ${core.values.join(", ")})`
     : `core: ${corePath} (empty — no constitution, every salient commit passes)`;
 
+  const modes = [dogfood ? "--dogfood" : null, status ? "--status" : null, ask !== null ? "--ask" : null]
+    .filter((m): m is string => m !== null);
+  if (modes.length > 1) throw new Error(`choose one mode per run: ${modes.join(" or ")}`);
+  if (limit !== null && ask === null) throw new Error("--limit is only valid with --ask");
+
+  if (status) {
+    for (const [given, name] of [[asOf, "--as-of"], [utcOffset, "--utc-offset"], [out, "--out"]] as const) {
+      if (given !== null) throw new Error(`${name} is not valid with --status (inspection only)`);
+    }
+    if (maxSlots !== null) throw new Error("--max-slots is not valid with --status (inspection only)");
+    const mnemeHome = join(homedir(), ".mneme");
+    const paths = {
+      spoolDir: spool ?? defaultSpoolDir(mnemeHome),
+      bufferFile: buffer ?? defaultBufferFile(mnemeHome),
+      inboxDir: inbox ?? join(homedir(), "mneme-tray"),
+      storeFile,
+      sockPath: join(mnemeHome, "helix.sock"),
+    };
+    console.log(coreLine);
+    printStatus(trayStatus(paths), paths);
+    return;
+  }
+
   if (dogfood) {
-    if (ask !== null) throw new Error("choose one mode per run: --dogfood or --ask");
     if (asOf !== null) throw new Error("--as-of is only valid with --ask");
     if (utcOffset !== null) throw new Error("--utc-offset is only valid with --ask");
     // With --dogfood, --spool, --buffer and --inbox merely relocate the
@@ -1191,11 +1187,12 @@ function main(): void {
     } else if (report.hits.length === 0) {
       console.log("  no matches");
     }
-    for (const h of report.hits.slice(0, 5)) {
+    const shown = limit ?? 5;
+    for (const h of report.hits.slice(0, shown)) {
       const basis = h.matched.length > 0
         ? `score ${h.score}; matched ${h.matched.join(", ")}`
         : "observation time in interval";
-      console.log(`  ${h.note} — "${h.title}" (${basis})`);
+      console.log(`  ${h.note} — "${clip(h.title)}" (${basis})`);
       if (h.observationTimeMs !== undefined) {
         const channel = h.triples.find((t) => t.p === "channel")?.o;
         const label = channel === "file" ? "observed (file mtime)" : "observed (adapter clock)";
@@ -1220,8 +1217,8 @@ function main(): void {
         }
       }
     }
-    if (report.hits.length > 5) {
-      console.log(`  … and ${report.hits.length - 5} more note(s) in this result`);
+    if (report.hits.length > shown) {
+      console.log(`  … and ${report.hits.length - shown} more note(s) in this result (--limit N shows more)`);
     }
     console.log(`trace: ${outFile} (mneme.trace/v1, ${report.trace.events.length} events; read-only — no store.write, no permit needed)`);
     console.log(`checks (untrusted TS mirrors, slice-local): ${checksOk(report.checks) ? "PASS" : "FAIL"}`);
