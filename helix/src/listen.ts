@@ -84,13 +84,27 @@ export function drainSpool(spoolDir: string): Observation[] {
   const packets: Observation[] = [];
   for (const name of names) {
     const file = join(spoolDir, name);
-    const packet = parseObservation(readFileSync(file, "utf8"));
-    if (packet === null) {
-      renameSync(file, `${file}.bad`);
-      continue;
+    // A running listener sweeps this same directory every five seconds,
+    // and the tray's dogfood sweep may race it: a file that vanishes
+    // between readdir and read (or read and unlink) was simply consumed
+    // by the other sweeper. Memory is keyed by packet id, so whichever
+    // sweeper won, the packet is buffered once and drained idempotently.
+    let text: string;
+    try {
+      text = readFileSync(file, "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw err;
     }
-    packets.push(packet);
-    unlinkSync(file);
+    const packet = parseObservation(text);
+    try {
+      if (packet === null) renameSync(file, `${file}.bad`);
+      else unlinkSync(file);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      continue; // the other sweeper got there first
+    }
+    if (packet !== null) packets.push(packet);
   }
   return packets;
 }

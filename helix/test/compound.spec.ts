@@ -27,7 +27,7 @@ const HUMAN_UTTERANCE_ONLY: CoreFile = {
 };
 
 describe("compound drain gates", () => {
-  it("partitions quarantine, deferral, Core denial, and commits exactly once", () => {
+  it("partitions quarantine, batching, Core denial, and commits exactly once", () => {
     // Assemble the flagged text at runtime so the repository contains no
     // plausible credential literal or customer hostname. The note trips two
     // rules, which pins note-id deduplication independently of match count.
@@ -42,17 +42,21 @@ describe("compound drain gates", () => {
       packet("denied-result", "tool-result", "# Build output\n\nGenerated compiler details."),
       packet("committed-note", "note", "# Monday note\n\nRemember the release checklist."),
       packet("committed-prompt", "user-prompt", "Summarize the release checklist."),
-      packet("deferred-note", "note", "# Later note\n\nReview after the current batch."),
+      packet("later-note", "note", "# Later note\n\nReview after the current batch."),
     ];
     const expected = {
       quarantined: ["quarantined-note"],
-      deferred: ["deferred-note"],
+      deferred: [],
       denied: ["denied-result"],
-      committed: ["committed-note", "committed-prompt"],
+      committed: ["committed-note", "committed-prompt", "later-note"],
     };
 
-    // Quarantine happens before the three-slot budget. Of the remaining
-    // four packets, one is denied by Core, two commit, and one defers.
+    // Under a three-slot budget the five packets are perceived in two
+    // rounds: [quarantined, denied, committed-note] then [committed-prompt,
+    // later-note]. Quarantine happens at the gate of round one, Core
+    // denies one item there, and the remaining three commit across both
+    // rounds — nothing defers, because the budget bounds a round, not the
+    // drain.
     const storeFile = join(tmp("partition"), "store.json");
     const report = drainPackets(
       packets,
@@ -117,6 +121,10 @@ describe("compound drain gates", () => {
       expect(writeKeySet).not.toContain(`semantic:${id}`);
     }
     expect(Object.values(report.checks).every(Boolean)).toBe(true);
+    const rounds = report.trace.events.filter(
+      (event) => event.type === "node.enter" && event.graph === "pg-s2w" && event.node === "sensor-normalize",
+    );
+    expect(rounds).toHaveLength(2);
   });
 });
 

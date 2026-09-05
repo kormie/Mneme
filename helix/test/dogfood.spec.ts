@@ -160,6 +160,59 @@ describe("--dogfood over a buffer mixing session-stop and user-prompt", () => {
   });
 });
 
+describe("--dogfood drains a backlog past the working-memory budget", () => {
+  it("commits every buffered packet across batches under --max-slots", async () => {
+    const dir = tmp("backlog");
+    const bufferFile = join(dir, "buffer.jsonl");
+    const storeFile = join(dir, "store.json");
+    const outFile = join(dir, "trace.json");
+    const base = fixturePacket();
+    const packets = Array.from({ length: 5 }, (_, i) => ({
+      ...base,
+      id: `cc-backlog-${i}`,
+      t: base.t + i,
+      text: `Prompt number ${i}: keep the loader sorted.`,
+    }));
+    writeFileSync(bufferFile, packets.map((p) => JSON.stringify(p)).join("\n") + "\n");
+    const { stdout } = await run("bun", [
+      TRAY, "--dogfood",
+      "--max-slots", "2",
+      "--spool", join(dir, "no-spool"),
+      "--buffer", bufferFile,
+      "--inbox", join(dir, "no-inbox"),
+      "--store", storeFile,
+      "--out", outFile,
+      "--core", join(dir, "no-core.json"),
+    ]);
+    expect(stdout).toContain("safety: PASS");
+    expect(stdout).not.toContain("deferred");
+    const store = loadStore(storeFile);
+    expect(Object.keys(store.episodic).sort()).toEqual(packets.map((p) => `ep:${p.id}`).sort());
+    const trace = JSON.parse(readFileSync(outFile, "utf8")) as TraceFile;
+    const rounds = trace.events.filter(
+      (e) => e.type === "node.enter" && e.graph === "pg-s2w" && e.node === "sensor-normalize",
+    );
+    expect(rounds).toHaveLength(3); // ceil(5 / 2), no sweep this run
+    expect(permitPairing(trace.events)).toHaveLength(10);
+    expect(countType(trace.events, "prompt.audit")).toBe(1);
+    expect(judge(kernel, trace.events).traceSafetyFails).toEqual([]);
+  });
+
+  it("refuses a bad --max-slots before touching anything", async () => {
+    const dir = tmp("backlog-bad");
+    await expect(run("bun", [
+      TRAY, "--dogfood", "--max-slots", "0",
+      "--spool", join(dir, "no-spool"),
+      "--buffer", join(dir, "no-buffer.jsonl"),
+      "--inbox", join(dir, "no-inbox"),
+      "--store", join(dir, "store.json"),
+      "--out", join(dir, "trace.json"),
+      "--core", join(dir, "no-core.json"),
+    ])).rejects.toMatchObject({ code: 1 });
+    expect(existsSync(join(dir, "store.json"))).toBe(false);
+  });
+});
+
 describe("--dogfood source resolution", () => {
   it("falls back to the inbox when the buffer is absent, exit 0", async () => {
     const dir = tmp("inbox");

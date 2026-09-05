@@ -655,34 +655,61 @@ export function drainPackets(
   maxSlots = 64,
   emitter: Emitter = makeEmitter(),
 ): TrayReport {
+  if (!Number.isInteger(maxSlots) || maxSlots < 1) {
+    throw new Error(`working-memory budget must be a positive integer, got ${maxSlots}`);
+  }
   const store = loadStore(storeFile);
   const appliers = trayAppliers(kernel, emitter, store, core);
   const identity = coreSnapshot(core);
+  const firstEvent = emitter.events.length;
 
-  const s2w = runGraph(
-    kernel,
-    "pg-s2w",
-    { raw, identity, slot_schema: { maxSlots } },
-    appliers,
-    emitter,
-  );
-  const slots = s2w.get("bind")?.slots as { obs: SensedObs }[];
-  const deferred = (s2w.get("bind")?.dropped ?? []) as string[];
-  const flag = s2w.get("anomaly")?.flag as AnomalyFlag | null;
+  // Working memory is a declared budget per pg-s2w invocation
+  // (slot_schema.maxSlots), so a backlog larger than the budget is
+  // perceived in batches: one sensory→working pass and one
+  // working→long-term pass per `maxSlots` packets, in source order,
+  // never reordered and never pre-filtered against the store. Nothing
+  // past the budget is dropped: a week of buffered prompts drains in
+  // ceil(n / maxSlots) rounds of the same declared graphs. pg-audit runs
+  // once, after the last round, so brief §9's rule — after prompt.audit,
+  // no store.write except audit.inbox — holds by construction.
+  const batches: Observation[][] = [];
+  for (let i = 0; i < raw.length; i += maxSlots) batches.push(raw.slice(i, i + maxSlots));
+  if (batches.length === 0) batches.push([]);
 
-  const w2l = runGraph(
-    kernel,
-    "pg-w2l",
-    { trace: { slots }, traces: [{ slots }], identity },
-    appliers,
-    emitter,
-  );
-  const worked = (w2l.get("episode")?.episodes ?? []) as Episode[];
-  const triples = (w2l.get("semantic")?.triples ?? []) as Triple[];
-  // What actually persisted is what the trace's episodic writes name;
+  const quarantined: AnomalyMatch[] = [];
+  const deferred: string[] = [];
+  const worked: Episode[] = [];
+  const triples: Triple[] = [];
+  for (const batch of batches) {
+    const s2w = runGraph(
+      kernel,
+      "pg-s2w",
+      { raw: batch, identity, slot_schema: { maxSlots } },
+      appliers,
+      emitter,
+    );
+    const slots = (s2w.get("bind")?.slots ?? []) as { obs: SensedObs }[];
+    // The bind stand-in's dropped port is still reported honestly; with
+    // batches no larger than the budget it stays empty.
+    deferred.push(...((s2w.get("bind")?.dropped ?? []) as string[]));
+    const flag = s2w.get("anomaly")?.flag as AnomalyFlag | null;
+    quarantined.push(...(flag?.matches ?? []));
+
+    const w2l = runGraph(
+      kernel,
+      "pg-w2l",
+      { trace: { slots }, traces: [{ slots }], identity },
+      appliers,
+      emitter,
+    );
+    worked.push(...((w2l.get("episode")?.episodes ?? []) as Episode[]));
+    triples.push(...((w2l.get("semantic")?.triples ?? []) as Triple[]));
+  }
+  // What actually persisted is what this drain's episodic writes name;
   // a note Core denied worked through the graph but was never written.
   const written = new Set(
     emitter.events
+      .slice(firstEvent)
       .filter((e) => e.type === "store.write" && e.store === "episodic")
       .flatMap((e) => (e.type === "store.write" ? e.keys : [])),
   );
@@ -703,7 +730,7 @@ export function drainPackets(
   const trace = makeTraceFile(kernel.spec, emitter.events);
   return {
     notes: raw.map((p) => p.id),
-    quarantined: flag?.matches ?? [],
+    quarantined,
     deferred,
     committed: episodes.map((e) => e.note),
     denied,
@@ -933,10 +960,11 @@ function runDogfood(
   outFile: string,
   core: CoreFile,
   coreLine: string,
+  maxSlots: number,
 ): number {
   const kernel = loadKernel();
   const emitter = makeEmitter();
-  const sweep = sweepSpool(kernel, spoolDir, bufferFile, emitter);
+  const sweep = sweepSpool(kernel, spoolDir, bufferFile, emitter, maxSlots);
   const src = dogfoodSource(bufferFile, inboxDir);
   console.log(coreLine);
   printSweep(sweep, spoolDir, bufferFile);
@@ -957,7 +985,7 @@ function runDogfood(
     return 0;
   }
 
-  const report = drainPackets(src.packets, storeFile, core, kernel, 64, emitter);
+  const report = drainPackets(src.packets, storeFile, core, kernel, maxSlots, emitter);
   writeTrace(report.trace, outFile);
   const sourceLine = src.kind === "buffer"
     ? `dogfood: ${report.notes.length} packet(s) from buffer ${bufferFile}` +
@@ -1028,6 +1056,7 @@ function main(): void {
   let ask: string | null = null;
   let coreArg: string | null = null;
   let asOf: string | null = null;
+  let maxSlots: number | null = null;
   let dogfood = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i] as string;
@@ -1035,7 +1064,8 @@ function main(): void {
       dogfood = true;
     } else if (
       flag === "--inbox" || flag === "--buffer" || flag === "--spool" || flag === "--out" ||
-      flag === "--store" || flag === "--ask" || flag === "--core" || flag === "--as-of"
+      flag === "--store" || flag === "--ask" || flag === "--core" || flag === "--as-of" ||
+      flag === "--max-slots"
     ) {
       const value = args[++i];
       if (value === undefined) throw new Error(`missing value for ${flag}`);
@@ -1046,7 +1076,12 @@ function main(): void {
       else if (flag === "--store") storeFile = resolve(value);
       else if (flag === "--core") coreArg = resolve(value);
       else if (flag === "--as-of") asOf = value;
-      else ask = value;
+      else if (flag === "--max-slots") {
+        if (!/^[1-9]\d*$/.test(value)) {
+          throw new Error(`--max-slots must be a positive integer, got ${JSON.stringify(value)}`);
+        }
+        maxSlots = Number(value);
+      } else ask = value;
     } else {
       throw new Error(`unknown argument: ${flag}`);
     }
@@ -1088,6 +1123,7 @@ function main(): void {
       out ?? join(HELIX_ROOT, "traces", "dogfood.json"),
       core,
       coreLine,
+      maxSlots ?? 64,
     );
     return;
   }
@@ -1099,6 +1135,9 @@ function main(): void {
   }
   if (asOf !== null && ask === null) {
     throw new Error("--as-of is only valid with --ask");
+  }
+  if (maxSlots !== null && ask !== null) {
+    throw new Error("--max-slots is only valid for a drain (--dogfood, --inbox, or --buffer)");
   }
 
   if (ask !== null) {
@@ -1165,7 +1204,7 @@ function main(): void {
   let sourceLine: string;
   if (buffer !== null) {
     const { packets, skipped } = readBuffer(buffer);
-    report = drainPackets(packets, storeFile, core);
+    report = drainPackets(packets, storeFile, core, loadKernel(), maxSlots ?? 64);
     sourceLine = `tray: ${report.notes.length} packet(s) from buffer ${buffer}` +
       (skipped > 0 ? ` (${skipped} non-packet line(s) skipped)` : "");
   } else {
@@ -1177,7 +1216,7 @@ function main(): void {
       throw new Error(`inbox not found: ${inboxDir}`);
     }
     if (!inboxStat.isDirectory()) throw new Error(`inbox is not a directory: ${inboxDir}`);
-    report = runTray(inboxDir, storeFile, core);
+    report = runTray(inboxDir, storeFile, core, loadKernel(), maxSlots ?? 64);
     sourceLine = `tray: ${report.notes.length} notes from ${inboxDir}`;
   }
   const outFile = out ?? join(HELIX_ROOT, "traces", "tray.json");

@@ -159,11 +159,36 @@ describe("persistence and retrieval", () => {
     expect(readFileSync(file, "utf8")).toContain("something-else"); // untouched
   });
 
-  it("defers notes past the working-memory budget instead of dropping them silently", () => {
-    const report = runTray(FIXTURES, join(tmp("budget"), "tray.json"), emptyCore(), kernel, 2);
-    expect(report.committed).toEqual(FIXTURE_NOTES.slice(0, 2));
-    expect(report.deferred).toEqual(FIXTURE_NOTES.slice(2));
+  it("drains a backlog larger than the working-memory budget in batches, committing everything", () => {
+    // Working memory is a declared budget per pg-s2w invocation, so a
+    // backlog of 5 under a budget of 2 is perceived in three rounds of
+    // the same declared graphs — nothing past the budget is dropped, and
+    // nothing is reordered. pg-audit runs once, after the last round.
+    const batchedStore = join(tmp("budget"), "tray.json");
+    const report = runTray(FIXTURES, batchedStore, emptyCore(), kernel, 2);
+    expect(report.committed).toEqual(FIXTURE_NOTES);
+    expect(report.deferred).toEqual([]);
     expect(Object.values(report.checks).every(Boolean)).toBe(true);
+    const events = report.trace.events;
+    const rounds = events.filter(
+      (e) => e.type === "node.enter" && e.graph === "pg-s2w" && e.node === "sensor-normalize",
+    );
+    expect(rounds).toHaveLength(3); // ceil(5 / 2)
+    expect(countType(events, "prompt.audit")).toBe(1);
+    const promptAudit = events.findIndex((e) => e.type === "prompt.audit");
+    const lastLtmWrite = events.map((e) => e.type === "store.write" && e.store !== "audit.inbox")
+      .lastIndexOf(true);
+    expect(lastLtmWrite).toBeLessThan(promptAudit);
+    expect(report.permitPairs).toHaveLength(FIXTURE_NOTES.length * 2);
+    // The memory that results is exactly what one unbatched round writes.
+    const wholeStore = join(tmp("budget-whole"), "tray.json");
+    runTray(FIXTURES, wholeStore, emptyCore(), kernel);
+    expect(loadStore(batchedStore)).toEqual(loadStore(wholeStore));
+  });
+
+  it("refuses a non-positive working-memory budget", () => {
+    expect(() => runTray(FIXTURES, join(tmp("budget-zero"), "tray.json"), emptyCore(), kernel, 0))
+      .toThrow(/positive integer/);
   });
 });
 

@@ -176,11 +176,20 @@ triple. The harness's injected `<task-notification>` turns are task
 chrome, not user prompts: the hook never observes them at all
 ([ADAPTER.md](ADAPTER.md)).
 
-`--spool`, `--buffer`, `--inbox`, `--store`, `--out`, and `--core`
-relocate those defaults when you keep your tray (or your constitution)
-elsewhere. The single-source drains remain for when you want just one
-side (they read one file and never sweep, so `--spool` is refused
-outside `--dogfood`):
+Working memory is a declared budget per sensory→working pass (64
+slots by default; `--max-slots` changes it on any drain). A backlog
+larger than that — a week of Claude Code prompts — is perceived in
+rounds: one pg-s2w pass and one pg-w2l pass per 64 packets, in buffer
+order, each `store.write` still under its own `core.permit`, and
+pg-audit once after the last round. Nothing past the budget is dropped
+or held back for a later run; the trace simply shows one graph pair per
+round.
+
+`--spool`, `--buffer`, `--inbox`, `--store`, `--out`, `--core`, and
+`--max-slots` relocate or resize those defaults when you keep your tray
+(or your constitution) elsewhere. The single-source drains remain for
+when you want just one side (they read one file and never sweep, so
+`--spool` is refused outside `--dogfood`):
 
 ```sh
 # during the day: standups, PR review notes, CI post-mortems,
@@ -287,11 +296,16 @@ refuses the Graft shape outright):
    `--once` pass, run by the one operator command — so the loop is the
    hook plus that command. The listener stays available for anyone who
    wants packets buffered live.
+9. ✅ **Backlogs drain completely.** A drain larger than the
+   working-memory budget used to commit its first 64 packets and report
+   the rest as deferred, with no way to ingest them from a buffer; it now
+   runs the declared graphs in rounds of 64 until the backlog is
+   perceived, pg-audit once at the end.
 
 Next, in rank order:
 
-9. **Better retrieval.** Multi-note synthesis and phrase queries remain.
-10. **Steward-gated proposals only.** Richer structural edges live in the
+10. **Better retrieval.** Multi-note synthesis and phrase queries remain.
+11. **Steward-gated proposals only.** Richer structural edges live in the
    frozen `structural` transform, and this whole domain belongs to the
    `agora` twin eventually — both go to Kormie as graph diffs, not code.
 
