@@ -276,6 +276,53 @@ describe("retrieval ranking", () => {
   });
 });
 
+describe("quoted phrases", () => {
+  const t0 = Date.parse("2026-09-01T12:00:00Z");
+  function note(id: string, t: number, text: string): Observation {
+    return { id, t, channel: "file", kind: "note", text };
+  }
+
+  it("requires every word of the phrase, and prefers adjacency in a heading over scattered words", () => {
+    const sf = join(tmp("phrase"), "tray.json");
+    drainPackets([
+      note("scattered.md", t0 + 1000, "# Tuesday\n\nThe review of the code took an hour; code review again."),
+      note("heading.md", t0, "# Process\n\n## Code review\n\n- two approvals"),
+      note("partial.md", t0 + 2000, "# Wednesday\n\nThe review went well."),
+    ], sf, emptyCore(), kernel);
+    const r = runAsk('"code review"', sf, emptyCore(), kernel);
+    expect(r.hits.map((h) => h.note)).toEqual(["heading.md", "scattered.md"]);
+    expect(r.hits[0]?.phrases).toEqual({ "code review": "adjacent" });
+    expect(r.hits[1]?.phrases).toEqual({ "code review": "all-words" });
+    expect(r.hits[0]!.score).toBeGreaterThan(r.hits[1]!.score);
+    expect(r.hits[0]?.matched).toEqual(["code", "review"]);
+    // Extra unquoted words stay any-match on top of the required phrase.
+    const both = runAsk('approvals "code review"', sf, emptyCore(), kernel);
+    expect(both.hits.map((h) => h.note)).toEqual(["heading.md", "scattered.md"]);
+    expect(both.hits[0]?.matched).toEqual(["approvals", "code", "review"]);
+  });
+
+  it("treats unbalanced quotes as plain text and a phrase of stopwords as no phrase", () => {
+    const sf = join(tmp("quotes"), "tray.json");
+    drainPackets([note("n.md", t0, "# Notes\n\nthe review went well")], sf, emptyCore(), kernel);
+    expect(runAsk('review "went', sf, emptyCore(), kernel).hits[0]?.matched).toEqual(["review", "went"]);
+    expect(runAsk('"the" review', sf, emptyCore(), kernel).hits[0]?.phrases).toBeUndefined();
+    expect(runAsk('"went well"', sf, emptyCore(), kernel).hits[0]?.phrases).toEqual({ "went well": "all-words" });
+    expect(runAsk('"went badly"', sf, emptyCore(), kernel).hits).toEqual([]);
+  });
+
+  it("combines with a period and stays deterministic", () => {
+    const sf = join(tmp("phrase-period"), "tray.json");
+    drainPackets([
+      note("in.md", Date.parse("2026-09-02T12:00:00Z"), "# Canary rollout\n\nfine"),
+      note("out.md", Date.parse("2026-08-20T12:00:00Z"), "# Canary rollout\n\nfine"),
+    ], sf, emptyCore(), kernel);
+    const a = runAsk('"canary rollout" last week', sf, emptyCore(), kernel, "2026-09-07");
+    expect(a.hits.map((h) => h.note)).toEqual(["in.md"]);
+    expect(JSON.stringify(runAsk('"canary rollout" last week', sf, emptyCore(), kernel, "2026-09-07")))
+      .toBe(JSON.stringify(a));
+  });
+});
+
 describe("quarantine gate", () => {
   // Secret-shaped bytes are assembled here, never committed to the repo.
   const AWS_EXAMPLE = "AKIA" + "IOSFODNN7EXAMPLE";

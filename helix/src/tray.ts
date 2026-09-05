@@ -89,8 +89,33 @@ export interface Hit {
    * same word for an exact hit, a longer one for a prefix hit
    * ("deploy" → "deployment"). Display only. */
   via?: Record<string, string>;
+  /** For each quoted phrase in the ask: "adjacent" when the folded phrase
+   * appears as-is in the note id, title, or a heading; "all-words" when
+   * every word is present but adjacency cannot be checked (body prose is
+   * never stored). A note missing any word of a phrase is not a hit. */
+  phrases?: Record<string, "adjacent" | "all-words">;
   triples: Triple[];
   observationTimeMs?: number;
+}
+
+export interface Phrase {
+  /** Folded, single-spaced phrase text, for adjacency checks. */
+  text: string;
+  /** Its content words (stopwords out), each required. */
+  tokens: string[];
+}
+
+/** Pull "quoted spans" out of a question. Unbalanced quotes are plain
+ * text. A phrase with no content words is ignored. */
+export function extractPhrases(question: string): { phrases: Phrase[]; rest: string } {
+  const phrases: Phrase[] = [];
+  const rest = question.replace(/"([^"]+)"/gu, (_m, span: string) => {
+    const text = fold(span).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    const toks = queryTokens(span);
+    if (toks.length > 0) phrases.push({ text, tokens: toks });
+    return " ";
+  });
+  return { phrases, rest };
 }
 
 /** A word in the note's name, title, or a heading counts double; a word
@@ -337,18 +362,25 @@ export function trayAppliers(
       const text = slots.map((s) => s.text).join(" ");
       // The period phrase is recognised first and excised, so its own
       // words ("yesterday", a date literal) never become lexical
-      // requirements on the notes.
+      // requirements on the notes. Then quoted spans become phrases —
+      // every word required — and the rest is the any-match word list.
       const temporal = temporalQuery(text, slots[0]?.asOf, slots[0]?.utcOffset);
+      const { phrases, rest } = extractPhrases(temporal.residual);
       return {
         query: {
-          tokens: queryTokens(temporal.residual),
+          tokens: queryTokens(rest),
+          phrases,
           temporal,
           indexes: ["episodic", "semantic"],
         },
       };
     },
     "pg-w2l/hybrid": (inputs, ctx) => {
-      const query = inputs.query as { tokens: string[]; temporal: { interval?: ObservationInterval } };
+      const query = inputs.query as {
+        tokens: string[];
+        phrases: Phrase[];
+        temporal: { interval?: ObservationInterval };
+      };
       const episodic = inputs.episodic as Episode[];
       const semantic = inputs.semantic as Triple[];
       ctx.emit({ type: "store.read", store: "episodic", keys: episodic.map((e) => e.id) });
@@ -367,33 +399,62 @@ export function trayAppliers(
           let score = 0;
           const matched: string[] = [];
           const via: Record<string, string> = {};
-          for (const q of query.tokens) {
+          const scoreToken = (q: string): boolean => {
             const strongHit = strong.find((sTok) => tokenMatches(q, sTok));
             const weakHit = strongHit === undefined ? weak.find((wTok) => tokenMatches(q, wTok)) : undefined;
             const hit = strongHit ?? weakHit;
-            if (hit === undefined) continue;
+            if (hit === undefined) return false;
             score += strongHit !== undefined ? STRONG_WEIGHT : WEAK_WEIGHT;
-            matched.push(q);
-            via[q] = hit;
+            if (!matched.includes(q)) {
+              matched.push(q);
+              via[q] = hit;
+            }
+            return true;
+          };
+          for (const q of query.tokens) scoreToken(q);
+          // A quoted phrase requires every one of its words. Adjacency can
+          // only be checked against what is stored as a string — the
+          // note id, title, and headings — because body prose never
+          // persists; a phrase found only in the keyword bag is reported
+          // as "all words", never claimed as adjacent.
+          const phrases: Record<string, "adjacent" | "all-words"> = {};
+          let phrasesSatisfied = true;
+          const strings = [ep.note, ep.title, ...ep.headings].map((x) => fold(x).replace(/\s+/gu, " "));
+          for (const ph of query.phrases) {
+            const allWords = ph.tokens.map(scoreToken).every(Boolean);
+            if (!allWords) {
+              phrasesSatisfied = false;
+              continue;
+            }
+            if (strings.some((x) => x.includes(ph.text))) {
+              score += STRONG_WEIGHT;
+              phrases[ph.text] = "adjacent";
+            } else {
+              phrases[ph.text] = "all-words";
+            }
           }
           const observationTimeMs = validObservationTime(ep.observationTimeMs);
           return {
             note: ep.note,
             title: ep.title,
-            score,
+            score: phrasesSatisfied ? score : -1,
             matched,
             ...(matched.length === 0 ? {} : { via }),
+            ...(Object.keys(phrases).length === 0 ? {} : { phrases }),
             triples: ts,
             ...(observationTimeMs === undefined ? {} : { observationTimeMs }),
           };
         })
         .filter((h) => {
+          if (h.score < 0) return false; // a required phrase was missing
           const interval = query.temporal.interval;
           if (interval !== undefined) {
             if (h.observationTimeMs === undefined) return false;
             if (h.observationTimeMs < interval.startMs || h.observationTimeMs >= interval.endMs) return false;
           }
-          return query.tokens.length === 0 ? interval !== undefined : h.score > 0;
+          return query.tokens.length === 0 && query.phrases.length === 0
+            ? interval !== undefined
+            : h.score > 0;
         })
         // Score, then newest observation first (undated last), then note
         // id: the same total order for every ask, so "what did I say
@@ -1353,6 +1414,14 @@ function main(): void {
         ? `score ${h.score}; matched ${shownMatches.join(", ")}`
         : "observation time in interval";
       console.log(`  ${h.note} — "${clip(h.title)}" (${basis})`);
+      for (const [text, how] of Object.entries(h.phrases ?? {})) {
+        console.log(
+          `      phrase "${text}": ` +
+            (how === "adjacent"
+              ? "adjacent in the note id, title, or a heading"
+              : "all words present in stored keywords (adjacency unknown — body prose is not stored)"),
+        );
+      }
       if (h.observationTimeMs !== undefined) {
         const channel = h.triples.find((t) => t.p === "channel")?.o;
         const label = channel === "file" ? "observed (file mtime)" : "observed (adapter clock)";

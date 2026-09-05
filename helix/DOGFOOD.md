@@ -279,7 +279,12 @@ letters also matches stored words it begins ("deploy" finds
 kind, observation time — is never content, so "claude" does not match
 every prompt. Every result sorts by that score, then newest observation
 first (undated records last), then source-note id, so the latest thing
-you said about a topic comes first. The wall clock stays in your shell: an alias such as
+you said about a topic comes first. A quoted phrase (`--ask '"code
+review"'`) requires every one of its words; when the phrase appears
+as you wrote it in a note's name, title, or a heading the hit says
+"adjacent" and scores higher, and when its words are only in the body
+keyword bag the hit says so, because body prose is never stored and
+adjacency there cannot be checked. The wall clock stays in your shell: an alias such as
 `alias ask-today='bun run tray --as-of "$(date -u +%F)" --ask'` keeps
 the run itself reproducible.
 
