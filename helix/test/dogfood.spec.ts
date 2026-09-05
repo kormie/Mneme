@@ -105,6 +105,7 @@ describe("--dogfood over a fixture buffer", () => {
 
   it("prints the safety verdict, the liveness gaps, and the three prompts", async () => {
     const { stdout } = await result;
+    expect(stdout).toContain("committed: 1 (1 new, 0 replaced, 0 unchanged)");
     expect(stdout).toContain("safety: PASS");
     expect(stdout).toContain("Mneme.Trace.HasClusterCut: fail");
     expect(stdout).toContain("Mneme.Trace.HasArchiveSample: fail");
@@ -196,6 +197,23 @@ describe("--dogfood drains a backlog past the working-memory budget", () => {
     expect(permitPairing(trace.events)).toHaveLength(10);
     expect(countType(trace.events, "prompt.audit")).toBe(1);
     expect(judge(kernel, trace.events).traceSafetyFails).toEqual([]);
+    // Monday again: the same buffer re-drains as unchanged, one line, and
+    // still one permit per write.
+    const again = await run("bun", [
+      TRAY, "--dogfood",
+      "--max-slots", "2",
+      "--spool", join(dir, "no-spool"),
+      "--buffer", bufferFile,
+      "--inbox", join(dir, "no-inbox"),
+      "--store", storeFile,
+      "--out", outFile,
+      "--core", join(dir, "no-core.json"),
+    ]);
+    expect(again.stdout).toContain("committed: 5 (0 new, 0 replaced, 5 unchanged)");
+    expect(again.stdout).toContain("= 5 already remembered, re-committed unchanged (one permit each)");
+    expect(again.stdout).not.toContain("cc-backlog-0 [");
+    const trace2 = JSON.parse(readFileSync(outFile, "utf8")) as TraceFile;
+    expect(permitPairing(trace2.events)).toHaveLength(10);
   });
 
   it("refuses a bad --max-slots before touching anything", async () => {

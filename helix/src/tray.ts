@@ -570,11 +570,29 @@ function runChecks(kernel: KernelIR, trace: TraceFile): Checks {
   };
 }
 
+/** Key-order-independent JSON, so a reloaded entry and a freshly built
+ * one compare by content, not by field order. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 export interface TrayReport {
   notes: string[];
   quarantined: AnomalyMatch[];
   deferred: string[];
   committed: string[];
+  /** `committed` partitioned against what the store held before this
+   * drain: first seen, re-written with different content, or re-written
+   * byte-for-byte the same (a re-drained buffer). Every write still
+   * consumed its own core.permit — this is a report, never a gate. */
+  fresh: string[];
+  replaced: string[];
+  unchanged: string[];
   /** Notes that reached the write path but whose commits Core refused
    * (core.deny + core.interrupt, both items — this drain wrote nothing
    * for them; an entry an earlier drain committed, if any, remains
@@ -685,6 +703,11 @@ export function drainPackets(
     throw new Error(`working-memory budget must be a positive integer, got ${maxSlots}`);
   }
   const store = loadStore(storeFile);
+  // What memory held before this drain, per key, for the digest's
+  // new / replaced / unchanged classification below.
+  const before = new Map<string, string>();
+  for (const [k, v] of Object.entries(store.episodic)) before.set(`episodic:${k}`, canonical(v));
+  for (const [k, v] of Object.entries(store.semantic)) before.set(`semantic:${k}`, canonical(v));
   const appliers = trayAppliers(kernel, emitter, store, core);
   const identity = coreSnapshot(core);
   const firstEvent = emitter.events.length;
@@ -741,6 +764,19 @@ export function drainPackets(
   );
   const episodes = worked.filter((e) => written.has(e.id));
   const denied = worked.filter((e) => !written.has(e.id)).map((e) => e.note);
+  const fresh: string[] = [];
+  const replaced: string[] = [];
+  const unchanged: string[] = [];
+  for (const ep of episodes) {
+    const prevEpisode = before.get(`episodic:${ep.id}`);
+    const prevSemantic = before.get(`semantic:${ep.note}`);
+    if (prevEpisode === undefined) fresh.push(ep.note);
+    else if (
+      prevEpisode === canonical(store.episodic[ep.id]) &&
+      prevSemantic === canonical(store.semantic[ep.note])
+    ) unchanged.push(ep.note);
+    else replaced.push(ep.note);
+  }
 
   const audit = runGraph(
     kernel,
@@ -759,6 +795,9 @@ export function drainPackets(
     quarantined,
     deferred,
     committed: episodes.map((e) => e.note),
+    fresh,
+    replaced,
+    unchanged,
     denied,
     episodes,
     triples,
@@ -885,10 +924,22 @@ function printDrainDigest(
     );
     for (const n of report.denied) console.log(`  x ${n}`);
   }
-  console.log("committed:");
+  // A re-drained buffer re-commits everything it holds, each write under
+  // its own permit; the digest lists what changed and counts the rest.
+  const unchanged = new Set(report.unchanged);
+  const replaced = new Set(report.replaced);
+  console.log(
+    `committed: ${report.committed.length} (${report.fresh.length} new, ` +
+      `${report.replaced.length} replaced, ${report.unchanged.length} unchanged)`,
+  );
   for (const ep of report.episodes) {
+    if (unchanged.has(ep.note)) continue;
     const t = report.triples.filter((x) => x.s === ep.note).length;
-    console.log(`  - ${ep.note} [${ep.channel ?? "file"}]: "${clip(ep.title)}" → ${t} triples`);
+    const tag = replaced.has(ep.note) ? " (replaced)" : "";
+    console.log(`  - ${ep.note} [${ep.channel ?? "file"}]: "${clip(ep.title)}" → ${t} triples${tag}`);
+  }
+  if (report.unchanged.length > 0) {
+    console.log(`  = ${report.unchanged.length} already remembered, re-committed unchanged (one permit each)`);
   }
   console.log(`memory: ${storeFile}`);
   console.log(`audit: pg-w2l prompt corpus, ${report.auditFlags} heuristic flags → steward inbox`);

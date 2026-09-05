@@ -100,8 +100,33 @@ describe("persistence and retrieval", () => {
     expect(Object.keys(store.episodic).sort()).toEqual(
       FIXTURE_NOTES.map((n) => `ep:${n}`).sort(),
     );
-    runTray(FIXTURES, storeFile, emptyCore(), kernel); // re-ingest: replace, not duplicate
+    const again = runTray(FIXTURES, storeFile, emptyCore(), kernel); // re-ingest: replace, not duplicate
     expect(loadStore(storeFile)).toEqual(store);
+    // The digest knows nothing changed — and every write still paid a permit.
+    expect(again.unchanged).toEqual(FIXTURE_NOTES);
+    expect(again.fresh).toEqual([]);
+    expect(again.replaced).toEqual([]);
+    expect(again.permitPairs).toHaveLength(FIXTURE_NOTES.length * 2);
+  });
+
+  it("classifies a first drain as new and an edited re-delivery as replaced", () => {
+    const sf = join(tmp("classify"), "tray.json");
+    const t = 1756000000000;
+    const first = drainPackets([
+      { id: "cc-a", t, channel: "claude-code", kind: "user-prompt", text: "Sort the loader." },
+      { id: "cc-b", t, channel: "claude-code", kind: "user-prompt", text: "Test the gate." },
+    ], sf, emptyCore(), kernel);
+    expect(first.fresh).toEqual(["cc-a", "cc-b"]);
+    expect(first.unchanged).toEqual([]);
+    const second = drainPackets([
+      { id: "cc-a", t, channel: "claude-code", kind: "user-prompt", text: "Sort the loader." },
+      { id: "cc-b", t: t + 1, channel: "claude-code", kind: "user-prompt", text: "Test the gate again." },
+      { id: "cc-c", t, channel: "claude-code", kind: "user-prompt", text: "New prompt." },
+    ], sf, emptyCore(), kernel);
+    expect(second.unchanged).toEqual(["cc-a"]);
+    expect(second.replaced).toEqual(["cc-b"]);
+    expect(second.fresh).toEqual(["cc-c"]);
+    expect(second.committed).toEqual(["cc-a", "cc-b", "cc-c"]);
   });
 
   it("answers a question over the store via the declared read path", () => {
