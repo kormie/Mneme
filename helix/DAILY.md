@@ -46,10 +46,10 @@ printf '%s\n' 'Bring the folding chairs and return the borrowed stove.' |
 Recall runs `query → hybrid → rerank → inject` over the saved memory.
 It matches titles, headings, saved excerpts, and a capped set of body
 keywords, including accent-folded words, so `reunion` can find `réunion`.
-Results include the saved source, observation time, and an exact excerpt of up to 1,200
-characters. The excerpt may be shorter than the original note, and it
-does not imply that the source file still exists. Keep your originals
-when you need the full text.
+Results include the saved source, observation time, and an exact excerpt
+of up to 1,200 characters. The excerpt may be shorter than the original
+note, and it does not imply that the source file still exists. Keep your
+originals when you need the full text.
 
 Recall does not synthesize several notes into an answer. Specific words
 from a decision or topic are the most useful queries. Older stores
@@ -62,7 +62,7 @@ source again supplies the new fields.
 | --- | --- |
 | `./mneme demo` | Run the isolated sample loop. |
 | `./mneme capture "text"` | Save a note to the profile inbox. |
-| `./mneme remember` | Process the configured inbox and sensory buffer. |
+| `./mneme remember` | Process the configured inbox, sensory buffer, and hook spool. |
 | `./mneme recall "query"` | Search remembered notes. |
 | `./mneme recent --days 7 --limit 10` | Review recent remembered notes. |
 | `./mneme status` | Show the profile and memory state. |
@@ -74,18 +74,28 @@ calendar days:
 
 ```sh
 ./mneme recall "camping" --since 2026-09-01 --until 2026-09-07 --limit 10
+./mneme recall "garden yesterday"
 ```
 
-Put double quotes inside the query to require a phrase:
+Relative periods such as `yesterday` or `last week` use today's local
+date and the current UTC offset. The lower-level tray commands accept
+an explicit `--as-of` date for reproducible queries. Use `--since` and
+`--until` for local calendar boundaries across daylight-saving changes;
+natural-language periods use the current offset throughout the interval.
+
+Put double quotes inside the query to require its content words together:
 
 ```sh
 ./mneme recall '"borrowed stove"'
 ```
 
-Phrases match a title, heading, or saved excerpt, with case and accents
-folded. They cannot find prose beyond the saved excerpt unless it appears
-in a title or heading. Ordinary search matches indexed words beyond that
-excerpt too, up to the keyword cap.
+Quoted queries require every content word; unquoted queries can match
+any query word. Case and accents are folded. The existing phrase scorer
+checks adjacency in source names, titles, and headings, and gives those
+matches more weight. It does not check adjacency in body excerpts, so a
+body match is a match of words, not a guarantee of the exact phrase.
+Ordinary search can match indexed words beyond the excerpt too, up to
+the keyword cap.
 
 For Markdown files, the observation time is the file's modification
 time. Adapter observations use the timestamp recorded by the adapter.
@@ -117,21 +127,50 @@ entry instead of creating a duplicate. Editing the source file affects
 memory only after another `remember` run; removing a source file does
 not remove the remembered entry.
 
-The existing Claude Code adapter can supply an L0 sensory buffer. Follow
-[ADAPTER.md](ADAPTER.md) to configure it. Its default buffer is
-`~/.mneme/buffer.jsonl`, included by `remember` in the default profile.
-You can choose both paths explicitly:
+The existing Claude Code hook records prompts into the sensory buffer
+when a listener runs, and otherwise into a spool directory. Follow
+[ADAPTER.md](ADAPTER.md) to configure it, or install the hook once from
+the repository root:
+
+```sh
+(cd helix && bun run install-hook --write)
+```
+
+This merges the hook into your Claude Code settings and keeps a backup.
+The default `remember` reads `~/.mneme/buffer.jsonl` and the packets in
+`~/.mneme/spool` alongside the profile inbox, so no listener daemon is
+needed. Choose paths explicitly when your hook is configured elsewhere:
 
 ```sh
 ./mneme remember --buffer "$HOME/.mneme/buffer.jsonl"
-./mneme remember --inbox "$HOME/notes/mneme-inbox" --buffer "$HOME/.mneme/buffer.jsonl"
+./mneme remember --inbox "$HOME/notes/mneme-inbox" --spool "$HOME/.mneme/spool"
 ```
 
-`remember` can process both sources in the same run. Packet IDs identify
-adapter observations; re-delivery replaces entries. The adapter captures
-into the sensory buffer, and the operator's `remember` command commits
-memory. Source files and buffer packets stay in place after remembering.
-The daily CLI does not install or start the adapter.
+`remember` processes these sources together through the existing memory
+graphs. Packet IDs identify adapter observations; re-delivery replaces
+entries. Source files, buffer packets, and spool files stay in place
+after remembering. It reads the profile's spool rather than implicitly
+following `MNEME_SPOOL`; use `--spool` for a relocated hook.
+
+### Agent notes use their own provenance
+
+`capture` is for notes the operator writes. An agent recording a finding
+uses the existing agent-note command from `helix/`:
+
+```sh
+cd helix
+bun run remember "First line is a title
+Then the finding, its source, and why it matters."
+```
+
+This queues an observation declared as `claude-code/agent-note`. It does
+not commit memory. The next `./mneme remember` from the repository root
+or `bun run dogfood` from `helix/` considers it through the graph, using
+the corresponding store. A Core with `human-utterance-only` refuses
+agent-note writes by design. These two commands deliberately have
+different meanings: **`bun run remember` queues an agent note;
+`./mneme remember` commits the profile's queued sources.** See
+[DOGFOOD.md](DOGFOOD.md) for the established agent and journal workflow.
 
 ## Profiles and storage
 
@@ -143,6 +182,8 @@ The default profile is `~/.mneme`:
 | `~/.mneme/store.json` | Remembered entries, indexed words, and saved excerpts. |
 | `~/.mneme/traces/` | Scheduler traces for inspecting memory operations. |
 | `~/.mneme/buffer.jsonl` | Sensory buffer, when the optional adapter is configured. |
+| `~/.mneme/spool/` | Queued hook and agent-note packets, read by `remember`. |
+| `~/.mneme/core.json` | Optional steward-authored write policy; only the steward edits it. |
 
 Use a separate profile to try changes or keep note collections apart:
 
@@ -153,9 +194,12 @@ Use a separate profile to try changes or keep note collections apart:
 ```
 
 `MNEME_HOME` sets the default profile location for the shell; an explicit
-`--home` takes precedence. Existing lower-level tray stores are not
-automatically imported. Use `status` to confirm the active paths before
-switching between the daily CLI and the older `bun run tray` or
+`--home` takes precedence. Each profile reads its own `core.json`; a new
+profile does not copy your existing policy. The daily CLI uses
+`~/.mneme/store.json` and `~/.mneme/inbox/`; the established tray defaults
+are `helix/store/tray.json` and `~/mneme-tray`. Existing tray stores are
+not automatically imported. Use `status` to confirm active paths before
+switching between the daily CLI and the `bun run tray` or
 `bun run dogfood` commands documented in [DOGFOOD.md](DOGFOOD.md).
 
 The store is plain JSON. Inbox files and adapter buffers can contain the
@@ -174,10 +218,16 @@ again. A previously committed clean version remains remembered. A clean
 scan means only that none of its rules matched; keep credentials,
 customer data, and production secrets out of the inbox.
 
-The Core store is empty. There are no personal constitution clauses,
-and the offline stand-in refuses steward-authored clauses it cannot
-interpret. This tool's permit enforcement is not a configured personal
-policy system.
+The CLI loads the profile's steward-authored `core.json` before a memory
+run and never writes it. A missing file means an empty Core, which
+constrains no writes. An unreadable, malformed, or wrongly shaped file
+aborts rather than silently disabling policy. The implemented
+`human-utterance-only` value refuses writes whose declared kind is not
+`note` or `user-prompt`; this trusts the adapter's provenance declaration.
+Unknown values fail closed at command startup and again when a write is
+evaluated. The `prose` field
+is documentation for the steward, not an executable rule. Core changes
+gate future writes; previously remembered entries remain readable.
 
 The printed checks are untrusted TypeScript checks of the emitted
 trace. The current project is judged and certified static; it has no
@@ -194,8 +244,12 @@ See [JUDGE.md](JUDGE.md) for the exact certificate and toolchain scope.
   for the active profile, and try a distinctive word from the note.
 - **A note is quarantined:** use the printed rule to clean its source,
   then run `remember` again.
+- **Core refuses an agent note:** this is expected with
+  `human-utterance-only`. The steward decides the policy; an agent must
+  not relabel the note as human-authored to bypass it.
 - **A date search omits old entries:** older store entries may have no
   observation timestamp. Re-ingest their originals to populate it.
 
 For low-level trace inspection and the existing dogfood feedback
-questions, see [DOGFOOD.md](DOGFOOD.md).
+questions, see [DOGFOOD.md](DOGFOOD.md). Features requiring a steward
+decision are tracked in [PROPOSALS.md](PROPOSALS.md).

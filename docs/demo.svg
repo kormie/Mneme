@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="730" viewBox="0 0 1120 730" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="758" viewBox="0 0 1120 758" role="img" aria-labelledby="title description">
   <title id="title">MNEME daily memory demo</title>
   <desc id="description">An excerpt of the runnable mneme demo. Remember commits three sample notes. Recall garden retrieves two original notes: a follow-up to borrow a trolley, and the decision to use raised beds because the soil stays wet after rain. Dates and temporary paths are omitted.</desc>
-  <rect width="1120" height="730" rx="16" fill="#f4f3ed"/>
+  <rect width="1120" height="758" rx="16" fill="#f4f3ed"/>
   <text x="40" y="47" fill="#17272b" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="700" letter-spacing="2">MNEME</text>
   <text x="140" y="47" fill="#65746f" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="14">A note now. Useful context later.</text>
-  <rect x="32" y="73" width="1056" height="616" rx="12" fill="#111b23"/>
+  <rect x="32" y="73" width="1056" height="644" rx="12" fill="#111b23"/>
   <path d="M44 73H1076Q1088 73 1088 85V119H32V85Q32 73 44 73Z" fill="#1e2a32"/>
   <circle cx="56" cy="96" r="5" fill="#eb786e"/>
   <circle cx="76" cy="96" r="5" fill="#e9bd64"/>
@@ -13,20 +13,21 @@
   <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="17">
     <text x="58" y="157" fill="#86dcc4">$ ./mneme remember</text>
     <text x="58" y="185" fill="#e6eee9">Remembered 3 note(s). 3 in memory.</text>
-    <text x="58" y="213" fill="#a0b2ba">Trace saved. Write checks passed (untrusted).</text>
-    <text x="58" y="262" fill="#86dcc4">$ ./mneme recall "garden"</text>
-    <text x="58" y="290" fill="#e6eee9">2 match(es) in 3 remembered note(s).</text>
-    <text x="58" y="339" fill="#f2dca4" font-weight="600">1. Garden follow-up</text>
-    <text x="58" y="366" fill="#8dabb8" font-size="14">garden-follow-up.md · file</text>
-    <text x="58" y="396" fill="#e6eee9">Ask Sam on Friday to borrow the trolley for Saturday's garden work.</text>
-    <text x="58" y="424" fill="#e6eee9">Return it on Sunday. The timber list is waiting on the bed measurements.</text>
-    <text x="58" y="473" fill="#f2dca4" font-weight="600">2. Saturday garden plan</text>
-    <text x="58" y="500" fill="#8dabb8" font-size="14">garden-plan.md · file</text>
-    <text x="58" y="530" fill="#e6eee9">We chose raised beds for the neighbourhood garden because the soil stays wet after rain.</text>
-    <text x="58" y="558" fill="#e6eee9">Saturday at 10:00: measure the beds before buying timber. Bring the tape measure.</text>
+    <text x="58" y="213" fill="#a0b2ba">3 new · 0 updated · 0 unchanged</text>
+    <text x="58" y="241" fill="#a0b2ba">Trace saved. Write checks passed (untrusted).</text>
+    <text x="58" y="290" fill="#86dcc4">$ ./mneme recall "garden"</text>
+    <text x="58" y="318" fill="#e6eee9">2 match(es) in 3 remembered note(s).</text>
+    <text x="58" y="367" fill="#f2dca4" font-weight="600">1. Garden follow-up</text>
+    <text x="58" y="394" fill="#8dabb8" font-size="14">garden-follow-up.md · file</text>
+    <text x="58" y="424" fill="#e6eee9">Ask Sam on Friday to borrow the trolley for Saturday's garden work.</text>
+    <text x="58" y="452" fill="#e6eee9">Return it on Sunday. The timber list is waiting on the bed measurements.</text>
+    <text x="58" y="501" fill="#f2dca4" font-weight="600">2. Saturday garden plan</text>
+    <text x="58" y="528" fill="#8dabb8" font-size="14">garden-plan.md · file</text>
+    <text x="58" y="558" fill="#e6eee9">We chose raised beds for the neighbourhood garden because the soil stays wet after rain.</text>
+    <text x="58" y="586" fill="#e6eee9">Saturday at 10:00: measure the beds before buying timber. Bring the tape measure.</text>
   </g>
-  <path d="M58 599H1062" stroke="#2b3b45"/>
-  <text x="58" y="634" fill="#93afa9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15">Saved source excerpts · local files · no model or network</text>
-  <text x="58" y="659" fill="#7f929c" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13">Runtime certification awaits spec 0.11.</text>
-  <text x="40" y="712" fill="#65746f" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12">Demo output excerpt. Dates, temporary paths, and repeated Markdown headings omitted.</text>
+  <path d="M58 627H1062" stroke="#2b3b45"/>
+  <text x="58" y="662" fill="#93afa9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15">Saved source excerpts · local files · no model or network</text>
+  <text x="58" y="687" fill="#7f929c" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13">Runtime certification awaits spec 0.11.</text>
+  <text x="40" y="740" fill="#65746f" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12">Demo output excerpt. Dates, temporary paths, and repeated Markdown headings omitted.</text>
 </svg>

@@ -42,7 +42,7 @@ describe("tray store compatibility and validation", () => {
     const loaded = loadStore(file);
     expect(loaded).toEqual(legacy());
     expect(Object.hasOwn(loaded.episodic["ep:monday.md"]!, "excerpt")).toBe(false);
-    expect(Object.hasOwn(loaded.episodic["ep:monday.md"]!, "observedAt")).toBe(false);
+    expect(Object.hasOwn(loaded.episodic["ep:monday.md"]!, "observationTimeMs")).toBe(false);
     saveStore(file, loaded);
     expect(loadStore(file)).toEqual(loaded);
   });
@@ -51,7 +51,7 @@ describe("tray store compatibility and validation", () => {
     const file = join(temp(), "memory.json");
     const memory = legacy();
     Object.assign(memory.episodic["ep:monday.md"]!, {
-      channel: "file", excerpt: "é".repeat(1200), observedAt: 1_783_800_000_000,
+      channel: "file", kind: "note", excerpt: "é".repeat(1200), observationTimeMs: 1_783_800_000_000,
     });
     saveStore(file, memory);
     expect(loadStore(file)).toEqual(memory);
@@ -67,8 +67,7 @@ describe("tray store compatibility and validation", () => {
     ["mismatched episode id", (s: TrayStore) => ({ ...s, episodic: { "ep:monday.md": { ...s.episodic["ep:monday.md"], id: "ep:other.md" } } })],
     ["invalid heading", (s: TrayStore) => ({ ...s, episodic: { "ep:monday.md": { ...s.episodic["ep:monday.md"], headings: [null] } } })],
     ["oversized excerpt", (s: TrayStore) => ({ ...s, episodic: { "ep:monday.md": { ...s.episodic["ep:monday.md"], excerpt: "x".repeat(1201) } } })],
-    ["null timestamp", (s: TrayStore) => ({ ...s, episodic: { "ep:monday.md": { ...s.episodic["ep:monday.md"], observedAt: null } } })],
-    ["unrenderable timestamp", (s: TrayStore) => ({ ...s, episodic: { "ep:monday.md": { ...s.episodic["ep:monday.md"], observedAt: 9e15 } } })],
+    ["invalid provenance kind", (s: TrayStore) => ({ ...s, episodic: { "ep:monday.md": { ...s.episodic["ep:monday.md"], kind: null } } })],
     ["null triples", (s: TrayStore) => ({ ...s, semantic: { "monday.md": null } })],
     ["invalid triple", (s: TrayStore) => ({ ...s, semantic: { "monday.md": [{ s: "monday.md", p: "mentions", o: 12 }] } })],
     ["mismatched triple subject", (s: TrayStore) => ({ ...s, semantic: { "monday.md": [{ s: "another.md", p: "mentions", o: "meeting" }] } })],
@@ -81,6 +80,17 @@ describe("tray store compatibility and validation", () => {
       expect(readFileSync(file, "utf8")).toBe(text);
     });
   }
+
+  it("keeps legacy malformed timestamps readable for retrieval to treat as unknown", () => {
+    const file = join(temp(), "legacy-date.json");
+    const memory = legacy();
+    memory.episodic["ep:monday.md"]!.observationTimeMs = null as unknown as number;
+    saveStore(file, memory);
+    expect(loadStore(file)).toEqual(memory);
+    const bytes = readFileSync(file, "utf8");
+    loadStore(file);
+    expect(readFileSync(file, "utf8")).toBe(bytes);
+  });
 
   it("treats prototype-shaped observation ids as ordinary dictionary keys", () => {
     const file = join(temp(), "keys.json");
@@ -123,10 +133,10 @@ describe("atomic personal memory persistence", () => {
     saveStore(file, legacy());
     const previous = readFileSync(file, "utf8");
     const memory = loadStore(file);
-    memory.episodic["ep:monday.md"]!.observedAt = Number.NaN;
+    memory.episodic["ep:monday.md"]!.excerpt = "x".repeat(1201);
     expect(() => saveStore(file, memory)).toThrow(/invalid episode/);
     expect(readFileSync(file, "utf8")).toBe(previous);
-    memory.episodic["ep:monday.md"]!.observedAt = 1;
+    memory.episodic["ep:monday.md"]!.excerpt = "valid excerpt";
     memory.semantic["monday.md"] = new Array(1);
     expect(() => saveStore(file, memory)).toThrow(/invalid triples/);
     expect(readFileSync(file, "utf8")).toBe(previous);

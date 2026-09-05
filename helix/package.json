@@ -13,6 +13,12 @@
     "typecheck": "bunx tsc --noEmit",
     "tray": "bun src/tray.ts",
     "dogfood": "bun src/tray.ts --dogfood",
+    "ask": "bun src/tray.ts --ask",
+    "status": "bun src/tray.ts --status",
+    "journal": "bun src/tray.ts --journal",
+    "hook-snippet": "bun src/tray.ts --hook-snippet",
+    "install-hook": "bun src/hook-install.ts",
+    "remember": "bun src/remember.ts",
     "listen": "bun src/listen.ts",
     "judge": "bun src/judge.ts"
   },

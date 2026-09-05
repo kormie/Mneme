@@ -44,6 +44,7 @@ describe("daily memory workflow", () => {
     expect(countType(recalled.trace.events, "core.permit")).toBe(0);
     expect(readFileSync(join(home, "store.json"), "utf8")).toBe(before);
     expect(json(home, ["recent"]).hits).toHaveLength(1);
+    expect(json(home, ["recall", "garden today"]).hits).toHaveLength(1);
     expect(json(home, ["remember"]).total).toBe(1);
     expect(readFileSync(join(home, "store.json"), "utf8")).toBe(before);
   });
@@ -84,16 +85,66 @@ describe("daily memory workflow", () => {
     expect(json(home, ["status"]).notes).toBe(0);
   });
 
-  it("rolls back all staged batches if a later packet cannot be persisted", () => {
+  it("preserves memory if trace output fails after staging multiple batches", () => {
     const home = profile("rollback");
     json(home, ["capture", "A previous useful memory"]);
     json(home, ["remember"]);
     const before = readFileSync(join(home, "store.json"), "utf8");
-    const packets = Array.from({ length: 65 }, (_, i) => ({ id: `packet-${i}`, t: i === 64 ? 1e20 : Date.now(), channel: "claude-code", kind: "note", text: `# Added note ${i}` }));
+    const packets = Array.from({ length: 65 }, (_, i) => ({ id: `packet-${i}`, t: Date.now(), channel: "claude-code", kind: "note", text: `# Added note ${i}` }));
     writeFileSync(join(home, "buffer.jsonl"), packets.map((p) => JSON.stringify(p)).join("\n"));
+    rmSync(join(home, "traces"), { recursive: true });
+    writeFileSync(join(home, "traces"), "not a directory");
     expect(cli(home, ["remember"]).status).toBe(1);
     expect(readFileSync(join(home, "store.json"), "utf8")).toBe(before);
     expect(readdirSync(home).filter((f) => f.startsWith(".remember"))).toEqual([]);
+  });
+
+  it("reads spooled packets without a daemon and preserves Core provenance decisions", () => {
+    const home = profile("spool-core");
+    mkdirSync(join(home, "spool"), { recursive: true });
+    const core = JSON.stringify({ values: ["human-utterance-only"], goals: [], prose: "Only my observations." });
+    writeFileSync(join(home, "core.json"), core);
+    for (const kind of ["agent-note", "user-prompt", "session-stop"]) {
+      writeFileSync(join(home, "spool", `${kind}.json`), JSON.stringify({ id: kind, t: Date.now(), channel: "claude-code", kind, text: `# Source ${kind}\nGarden context.` }));
+    }
+    const result = json(home, ["remember"]);
+    expect(result.remembered).toBe(1);
+    expect(result.denied).toEqual(["agent-note"]);
+    expect(result.observedOnly).toBe(1);
+    expect(readdirSync(join(home, "spool"))).toHaveLength(3);
+    expect(readFileSync(join(home, "core.json"), "utf8")).toBe(core);
+    expect(json(home, ["recall", "garden"]).hits.map((h: { note: string }) => h.note)).toEqual(["user-prompt"]);
+    const trace = JSON.parse(readFileSync(result.trace, "utf8")) as TraceFile;
+    expect(countType(trace.events, "core.deny")).toBeGreaterThan(0);
+    expect(judge(loadKernel(), trace.events).judged).toBe(true);
+  });
+
+  it("deduplicates identical buffer/spool deliveries and refuses conflicting copies", () => {
+    const home = profile("spool-dedup");
+    mkdirSync(join(home, "spool"), { recursive: true });
+    const packet = { id: "same-observation", t: Date.now(), channel: "claude-code", kind: "user-prompt", text: "Garden idea" };
+    writeFileSync(join(home, "buffer.jsonl"), JSON.stringify(packet));
+    writeFileSync(join(home, "spool", "packet.json"), JSON.stringify(packet));
+    expect(json(home, ["remember"]).remembered).toBe(1);
+    const before = readFileSync(join(home, "store.json"), "utf8");
+    writeFileSync(join(home, "spool", "packet.json"), JSON.stringify({ ...packet, text: "Conflicting contents" }));
+    expect(cli(home, ["remember"]).stderr).toContain("conflicting adapter packets");
+    expect(readFileSync(join(home, "store.json"), "utf8")).toBe(before);
+  });
+
+  it("refuses unsupported or malformed Core before writing candidate or memory files", () => {
+    const home = profile("unsupported-core");
+    mkdirSync(home);
+    writeFileSync(join(home, "core.json"), JSON.stringify({ values: ["unimplemented-steward-value"], goals: [], prose: "" }));
+    for (const args of [["capture", "test note"], ["remember"], ["recall", "test"], ["recent"], ["status"], ["doctor"]]) {
+      const result = cli(home, args);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("cannot interpret core value");
+    }
+    expect(readdirSync(home)).toEqual(["core.json"]);
+    writeFileSync(join(home, "core.json"), "{broken");
+    expect(cli(home, ["remember"]).status).toBe(1);
+    expect(readdirSync(home)).toEqual(["core.json"]);
   });
 
   it("fails on source id collisions instead of replacing unrelated memory", () => {

@@ -39,8 +39,32 @@ export function headings(text: string): string[] {
     .filter((h): h is string => h !== undefined);
 }
 
+/**
+ * A heading-less packet — every ordinary Claude Code prompt — has no
+ * author-written summary, so its first line stands in as the title.
+ * That line is prose, and the store is meant to hold tokens, so it is
+ * clipped here at ingest: at most TITLE_MAX characters, cut back to the
+ * last word boundary, nothing appended. Headings are not clipped — the
+ * human wrote them as summaries. The clip is a named constant in a
+ * non-frozen transform stand-in, revertible in one line.
+ */
+export const TITLE_MAX = 120;
+
+export function clipTitle(line: string): string {
+  // Count code points, not UTF-16 units, so an emoji is never split.
+  const points = [...line];
+  if (points.length <= TITLE_MAX) return line;
+  const head = points.slice(0, TITLE_MAX).join("");
+  // Cut back to the last word boundary only when the limit falls inside
+  // a word; a word that ends exactly at the limit is kept whole.
+  const splitsWord = !/\s/u.test(points[TITLE_MAX] ?? " ");
+  const cut = splitsWord ? head.search(/\s\S*$/u) : head.length;
+  return (cut > 0 ? head.slice(0, cut) : head).trimEnd();
+}
+
 export function firstLine(text: string): string | null {
-  return text.split("\n").find((l) => l.trim() !== "")?.trim() ?? null;
+  const line = text.split("\n").find((l) => l.trim() !== "")?.trim();
+  return line === undefined ? null : clipTitle(line);
 }
 
 export function sensoryAppliers(): Appliers {
@@ -59,11 +83,18 @@ export function sensoryAppliers(): Appliers {
       }));
       return { obs };
     },
-    // Offline stand-in: uniform salience, no model call.
+    // Offline stand-in: no model call. Scores come from the packet's
+    // declared `kind` field, never from its text: session punctuation
+    // (`session-stop`) scores 0 — observed in L0, below every bind —
+    // while notes and user prompts stay at 1.
     "pg-s2w/salience": (inputs) => {
       const obs = inputs.obs as SensedObs[];
       return {
-        scored: obs.map((o) => ({ obs: o, salience: 1, rationale: "offline stand-in" })),
+        scored: obs.map((o) =>
+          o.kind === "session-stop"
+            ? { obs: o, salience: 0, rationale: "session punctuation (offline stand-in)" }
+            : { obs: o, salience: 1, rationale: "offline stand-in" },
+        ),
       };
     },
     // Offline stand-in: deterministic secret scan (src/anomaly.ts). A
@@ -72,11 +103,19 @@ export function sensoryAppliers(): Appliers {
       const obs = inputs.obs as SensedObs[];
       return { flag: scanNotes(obs) };
     },
+    // The AttentionGate's declared role is a deterministic threshold and
+    // budget, so it honours the scored port: only observations with
+    // positive salience pass, and quarantined ids never do. Salience 0
+    // stays an L0 observation — buffered, never bound.
     "pg-s2w/gate": (inputs) => {
       const scored = inputs.scored as { obs: SensedObs; salience: number }[];
       const flag = inputs.flag as AnomalyFlag | undefined;
       const quarantined = new Set(flag?.notes ?? []);
-      return { selected: scored.filter((s) => !quarantined.has(s.obs.id)).map((s) => s.obs) };
+      return {
+        selected: scored
+          .filter((s) => s.salience > 0 && !quarantined.has(s.obs.id))
+          .map((s) => s.obs),
+      };
     },
     "pg-s2w/style": () => ({ style: { tone: "plain" } }),
     // Working memory is a declared budget (slot_schema.maxSlots); what

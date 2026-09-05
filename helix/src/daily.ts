@@ -9,12 +9,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { defaultBufferFile } from "./buffer-path.js";
+import { loadCore } from "./core.js";
+import { clip } from "./display.js";
 import { judge } from "./judge.js";
 import { loadKernel } from "./kernel.js";
 import { parseObservation, type Observation } from "./observation.js";
 import { loadStore, saveStore } from "./store.js";
-import { drainPackets, runAsk, writeTrace, type AskOptions } from "./tray.js";
-import { countType, makeTraceFile, type TraceEvent } from "./trace.js";
+import { assertSupportedCore, drainPackets, runAsk, writeTrace, type DailyAskOptions } from "./tray.js";
+import { countType } from "./trace.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const MAX_CAPTURE_BYTES = 1024 * 1024;
@@ -24,7 +26,7 @@ const HELP = `MNEME — remember your notes, find the context later.
   ./mneme demo                         Try a temporary, fictional notebook
   ./mneme capture "text"               Save a note to your inbox
   ./mneme capture --title "title"      Read a note from piped stdin
-  ./mneme remember                     Remember inbox + adapter buffer
+  ./mneme remember                     Remember inbox + buffer + spooled notes
   ./mneme recall "garden"              Find saved source excerpts
   ./mneme recent                       Review the last 7 calendar days
   ./mneme status                       Show memory and source locations
@@ -33,6 +35,7 @@ const HELP = `MNEME — remember your notes, find the context later.
 Options:
   --home DIR                           Profile (default: MNEME_HOME or ~/.mneme)
   --inbox DIR / --buffer FILE           Sources for remember (both are read)
+  --spool DIR                          Spooled adapter packets for remember
   --since YYYY-MM-DD / --until YYYY-MM-DD  Inclusive local dates for recall
   --days N                             Calendar days for recent (default: 7)
   --limit N                            Results (default: 5 recall, 10 recent)
@@ -64,7 +67,7 @@ function parseArgs(argv: string[]): Options {
     if (!literal && (arg === "--help" || arg === "-h")) return { ...options, command: "help" };
     if (!literal && arg === "--json") { options.json = true; continue; }
     if (!literal && arg.startsWith("--")) {
-      if (!["--home", "--inbox", "--buffer", "--since", "--until", "--days", "--limit", "--title"].includes(arg)) {
+      if (!["--home", "--inbox", "--buffer", "--spool", "--since", "--until", "--days", "--limit", "--title"].includes(arg)) {
         throw new Error(`unknown option ${arg}; run ./mneme help`);
       }
       const value = argv[++i];
@@ -77,7 +80,7 @@ function parseArgs(argv: string[]): Options {
     } else options.text.push(arg);
   }
   const allowed: Record<string, string[]> = {
-    help: [], demo: [], capture: ["title"], remember: ["inbox", "buffer"],
+    help: [], demo: [], capture: ["title"], remember: ["inbox", "buffer", "spool"],
     recall: ["since", "until", "limit"], recent: ["days", "limit"], status: [], doctor: [],
   };
   const flags = allowed[options.command];
@@ -92,7 +95,15 @@ function parseArgs(argv: string[]): Options {
 }
 
 function paths(home: string) {
-  return { inbox: join(home, "inbox"), buffer: defaultBufferFile(home), store: join(home, "store.json"), traces: join(home, "traces") };
+  return { inbox: join(home, "inbox"), buffer: defaultBufferFile(home), spool: join(home, "spool"),
+    store: join(home, "store.json"), core: join(home, "core.json"), traces: join(home, "traces") };
+}
+
+function profileCore(home: string) {
+  const file = paths(home).core;
+  const core = loadCore(file);
+  assertSupportedCore(core, file);
+  return core;
 }
 
 /** Strip terminal control sequences only for display; memory keeps source bytes. */
@@ -169,18 +180,55 @@ function capture(home: string, text: string, title?: string): string {
   return file;
 }
 
+/** Snapshot pending packets without consuming them. The operator's graph
+ * run still performs all sensory screening and Core decisions. */
+function spoolPackets(directory: string, explicit: boolean) {
+  let files;
+  try { files = readdirSync(directory, { withFileTypes: true }); }
+  catch (err) {
+    if (!explicit && (err as NodeJS.ErrnoException).code === "ENOENT") return { packets: [] as Observation[], skipped: 0 };
+    throw new Error(`cannot read spool ${directory}: ${(err as Error).message}`);
+  }
+  const packets: Observation[] = [];
+  let skipped = 0;
+  for (const file of files.filter((f) => f.isFile() && f.name.endsWith(".json")).sort((a, b) => a.name < b.name ? -1 : 1)) {
+    let text;
+    try { text = readFileSync(join(directory, file.name), "utf8"); }
+    catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue; // a listener consumed it
+      throw err;
+    }
+    const packet = parseObservation(text);
+    if (packet) packets.push(packet); else skipped++;
+  }
+  return { packets, skipped };
+}
+
 function remember(options: Options) {
   const p = paths(options.home);
+  const core = profileCore(options.home);
   const inbox = resolve(options.values.inbox ?? p.inbox);
   const buffer = resolve(options.values.buffer ?? p.buffer);
   const notes = inboxPackets(inbox, options.values.inbox !== undefined);
   const buffered = bufferPackets(buffer, options.values.buffer !== undefined);
+  const spooled = spoolPackets(resolve(options.values.spool ?? p.spool), options.values.spool !== undefined);
+  const adapterPackets = new Map<string, Observation>();
+  for (const packet of [...buffered.packets, ...spooled.packets]) {
+    const previous = adapterPackets.get(packet.id);
+    if (!previous || packet.t > previous.t) adapterPackets.set(packet.id, packet);
+    else if (packet.t === previous.t && (packet.text !== previous.text || packet.kind !== previous.kind || packet.channel !== previous.channel)) {
+      throw new Error(`conflicting adapter packets with id ${packet.id}; resolve the source conflict before remembering`);
+    }
+  }
   const ids = new Set(notes.map((n) => n.id));
-  for (const packet of buffered.packets) {
+  for (const packet of adapterPackets.values()) {
     if (ids.has(packet.id)) throw new Error(`source id collision: ${packet.id}; rename the inbox note before remembering`);
   }
-  const packets = [...notes, ...buffered.packets];
-  if (!packets.length) return { remembered: 0, quarantined: [], skipped: buffered.skipped, total: Object.keys(loadStore(p.store).episodic).length, store: p.store, trace: null, batches: 0 };
+  const packets = [...notes, ...adapterPackets.values()];
+  const skipped = buffered.skipped + spooled.skipped;
+  if (!packets.length) return { remembered: 0, fresh: 0, replaced: 0, unchanged: 0,
+    quarantined: [], denied: [] as string[], observedOnly: 0, skipped,
+    total: Object.keys(loadStore(p.store).episodic).length, store: p.store, trace: null, batches: 0 };
   mkdirSync(options.home, { recursive: true, mode: 0o700 });
   const lock = join(options.home, ".remember-lock");
   try { mkdirSync(lock); }
@@ -196,28 +244,21 @@ function remember(options: Options) {
     staging = mkdtempSync(join(options.home, ".remember-"));
     const stagedStore = join(staging, "store.json");
     saveStore(stagedStore, loadStore(p.store));
-    const events: TraceEvent[] = [];
-    const quarantined: { note: string; rule: string }[] = [];
-    let remembered = 0;
-    let batches = 0;
-    for (let i = 0; i < packets.length; i += 64) {
-      const report = drainPackets(packets.slice(i, i + 64), stagedStore, kernel);
-      if (!Object.values(report.checks).every(Boolean) || !judge(kernel, report.trace.events).judged) {
-        throw new Error("Helix trace checks failed; existing memory was preserved");
-      }
-      for (const event of ["twin.install", "steward.ack", "cap.mint", "cap.revoke", "twin.action", "cluster.cut", "archive.sample"] as const) {
-        if (countType(report.trace.events, event)) throw new Error(`unexpected ${event}; existing memory was preserved`);
-      }
-      if (report.deferred.length) throw new Error("unexpected deferred notes; existing memory was preserved");
-      events.push(...report.trace.events);
-      quarantined.push(...report.quarantined);
-      remembered += report.committed.length;
-      batches++;
+    const report = drainPackets(packets, stagedStore, core, kernel);
+    if (!Object.values(report.checks).every(Boolean) || !judge(kernel, report.trace.events).judged) {
+      throw new Error("Helix trace checks failed; existing memory was preserved");
     }
+    for (const event of ["twin.install", "steward.ack", "cap.mint", "cap.revoke", "twin.action", "cluster.cut", "archive.sample"] as const) {
+      if (countType(report.trace.events, event)) throw new Error(`unexpected ${event}; existing memory was preserved`);
+    }
+    if (report.deferred.length) throw new Error("unexpected deferred notes; existing memory was preserved");
     const trace = join(p.traces, `remember-${Date.now()}-${randomUUID().slice(0, 8)}.json`);
-    writeTrace(makeTraceFile(kernel.spec, events), trace);
+    writeTrace(report.trace, trace);
     saveStore(p.store, loadStore(stagedStore));
-    return { remembered, quarantined, skipped: buffered.skipped, total: Object.keys(loadStore(p.store).episodic).length, store: p.store, trace, batches };
+    return { remembered: report.committed.length, fresh: report.fresh.length, replaced: report.replaced.length,
+      unchanged: report.unchanged.length, quarantined: report.quarantined, denied: report.denied,
+      observedOnly: report.observedOnly.length, skipped,
+      total: Object.keys(loadStore(p.store).episodic).length, store: p.store, trace, batches: Math.ceil(packets.length / 64) };
   } finally {
     if (staging) rmSync(staging, { recursive: true, force: true });
     rmSync(lock, { recursive: true });
@@ -226,8 +267,11 @@ function remember(options: Options) {
 
 function printRemember(result: ReturnType<typeof remember>): void {
   console.log(result.remembered ? `Remembered ${result.remembered} note(s). ${result.total} in memory.` : "Nothing new remembered.");
+  if (result.remembered) console.log(`${result.fresh} new · ${result.replaced} updated · ${result.unchanged} unchanged`);
   for (const q of result.quarantined) console.log(`Quarantined: ${display(q.note)} (${q.rule}). Earlier clean versions may remain in memory.`);
-  if (result.skipped) console.log(`Skipped ${result.skipped} malformed buffer line(s).`);
+  for (const note of result.denied) console.log(`Core refused: ${display(note)}. Earlier committed versions may remain.`);
+  if (result.observedOnly) console.log(`${result.observedOnly} session marker(s) observed without entering memory.`);
+  if (result.skipped) console.log(`Skipped ${result.skipped} malformed adapter record(s).`);
   if (result.trace) console.log(`Trace saved. Write checks passed (untrusted).`);
   console.log(`Memory: ${result.store}`);
 }
@@ -236,7 +280,7 @@ function recall(options: Options) {
   const recent = options.command === "recent";
   const question = options.text.join(" ").trim();
   if (!recent && !question) throw new Error("recall needs a search query; use recent to browse memory");
-  const filters: AskOptions = { limit: positive(options.values.limit, recent ? 10 : 5), recent };
+  const filters: DailyAskOptions = { limit: positive(options.values.limit, recent ? 10 : 5), recent };
   if (recent) {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
@@ -249,7 +293,14 @@ function recall(options: Options) {
     if (options.values.until) filters.until = calendarDay(options.values.until, true);
   }
   const p = paths(options.home);
-  const result = runAsk(question, p.store, loadKernel(), filters);
+  // The operator-facing command supplies its clock as input; graph
+  // execution remains deterministic, as in the lower-level --as-of CLI.
+  const now = new Date();
+  const asOf = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const offsetMinutes = -now.getTimezoneOffset();
+  const utcOffset = `${offsetMinutes < 0 ? "-" : "+"}${String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, "0")}:${String(Math.abs(offsetMinutes) % 60).padStart(2, "0")}`;
+  filters.clock = { asOf, utcOffset };
+  const result = runAsk(question, p.store, profileCore(options.home), loadKernel(), undefined, undefined, filters);
   if (!Object.values(result.checks).every(Boolean) || countType(result.trace.events, "store.write")) throw new Error("recall trace checks failed");
   const trace = join(p.traces, recent ? "recent.json" : "recall.json");
   writeTrace(result.trace, trace);
@@ -259,8 +310,8 @@ function recall(options: Options) {
 function printRecall(result: ReturnType<typeof recall>): void {
   console.log(`${result.hits.length} match(es) in ${result.storeNotes} remembered note(s).`);
   for (const [i, hit] of result.hits.entries()) {
-    console.log(`\n${i + 1}. ${display(hit.title)}`);
-    console.log(`   ${display(hit.note)}${hit.observedAt === undefined ? "" : ` · ${new Date(hit.observedAt).toLocaleDateString("en-CA")}`} · ${hit.channel ?? "file"}`);
+    console.log(`\n${i + 1}. ${clip(display(hit.title))}`);
+    console.log(`   ${display(hit.note)}${hit.observationTimeMs === undefined ? "" : ` · ${new Date(hit.observationTimeMs).toLocaleDateString("en-CA")}`} · ${hit.channel ?? "file"}`);
     console.log(`   ${display(hit.excerpt ?? "No saved excerpt in this older memory. Re-ingest the source to add one.").split("\n").join("\n   ")}`);
   }
   if (!result.storeNotes) console.log("Capture a note, then run ./mneme remember.");
@@ -271,8 +322,10 @@ function status(home: string) {
   const p = paths(home);
   const store = loadStore(p.store);
   const buffered = bufferPackets(p.buffer, false);
+  const spooled = spoolPackets(p.spool, false);
   return { home, notes: Object.keys(store.episodic).length, inboxNotes: inboxPackets(p.inbox, false).length,
-    bufferPackets: buffered.packets.length, skippedBufferLines: buffered.skipped, ...p };
+    bufferPackets: buffered.packets.length, spoolPackets: spooled.packets.length,
+    skippedBufferLines: buffered.skipped, skippedSpoolFiles: spooled.skipped, ...p };
 }
 
 function doctor(home: string) {
@@ -283,8 +336,9 @@ function doctor(home: string) {
     (version[1]! > target[1]! || (version[1] === target[1] && version[2]! >= target[2]!)));
   const verify = spawnSync("bash", [join(ROOT, "scripts/verify-spec.sh")], { cwd: ROOT, encoding: "utf8" });
   const info = status(home);
+  const core = profileCore(home);
   return { ok: bunOk && verify.status === 0, bun: Bun.version, requiredBun: pin, bunOk,
-    specOk: verify.status === 0, spec: (verify.stdout || verify.stderr).trim(), ...info };
+    specOk: verify.status === 0, spec: (verify.stdout || verify.stderr).trim(), coreValues: core.values.length, ...info };
 }
 
 function demo(): void {
@@ -315,6 +369,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     demo(); return;
   }
   if (options.command === "capture") {
+    profileCore(options.home);
     let text = options.text.join(" ");
     if (!text) {
       if (process.stdin.isTTY) throw new Error("provide note text or pipe stdin: printf 'note' | ./mneme capture");
@@ -329,7 +384,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     }
     const file = capture(options.home, text, options.values.title);
     if (options.json) console.log(JSON.stringify({ captured: file, remembered: false }));
-    else console.log(`Captured: ${file}\nRun ./mneme remember to add it to memory.`);
+    else console.log(`Captured: ${file}\nRun ./mneme --home ${JSON.stringify(options.home)} remember to add it to memory.`);
   } else if (options.command === "remember") {
     const result = remember(options);
     if (options.json) console.log(JSON.stringify(result)); else printRemember(result);
@@ -337,9 +392,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     const result = recall(options);
     if (options.json) console.log(JSON.stringify(result)); else printRecall(result);
   } else if (options.command === "status") {
+    profileCore(options.home);
     const result = status(options.home);
     if (options.json) console.log(JSON.stringify(result));
-    else console.log(`${result.notes} remembered note(s).\n${result.inboxNotes} inbox note(s), ${result.bufferPackets} buffered packet(s) available to remember.\nSources stay in place; re-remembering replaces entries by id.\nMemory: ${result.store}\nInbox: ${result.inbox}\nBuffer: ${result.buffer}\nTraces: ${result.traces}`);
+    else console.log(`${result.notes} remembered note(s).\n${result.inboxNotes} inbox note(s), ${result.bufferPackets} buffered packet(s), ${result.spoolPackets} spooled packet(s) available to remember.\nSources stay in place; re-remembering replaces entries by id.\nMemory: ${result.store}\nCore: ${result.core}\nInbox: ${result.inbox}\nBuffer: ${result.buffer}\nSpool: ${result.spool}\nTraces: ${result.traces}`);
   } else {
     const result = doctor(options.home);
     if (options.json) console.log(JSON.stringify(result));

@@ -27,8 +27,16 @@ export interface Episode {
   channel?: string;
   /** An exact prefix of the clean source, capped at 1200 UTF-16 units. */
   excerpt?: string;
-  /** Observation time in milliseconds since the Unix epoch. */
-  observedAt?: number;
+  /** Provenance kind the packet declared ("note", "user-prompt", …).
+   * Absent in stores written before kind was threaded through; read as
+   * unknown kind — refused if such an entry is ever proposed for
+   * writing under a provenance clause, passed under an empty Core.
+   * Already-committed entries are not re-audited. Never defaulted. */
+  kind?: string;
+  /** Time at which the adapter observed the source, in Unix milliseconds.
+   * For the file channel this is the file's mtime. It is not an event or
+   * authorship date. Absent in legacy stores and never defaulted. */
+  observationTimeMs?: number;
 }
 
 export interface Triple {
@@ -77,12 +85,13 @@ function checkedStore(value: unknown, file: string): TrayStore {
         typeof ep.title !== "string" || !Array.isArray(ep.headings) ||
         ![...ep.headings].every((h: unknown) => typeof h === "string") ||
         (Object.hasOwn(ep, "channel") && (typeof ep.channel !== "string" || ep.channel.length === 0)) ||
-        (Object.hasOwn(ep, "excerpt") && (typeof ep.excerpt !== "string" || ep.excerpt.length > 1200)) ||
-        (Object.hasOwn(ep, "observedAt") &&
-          (typeof ep.observedAt !== "number" || !Number.isFinite(ep.observedAt) ||
-            Math.abs(ep.observedAt) > 8.64e15))) {
+        (Object.hasOwn(ep, "kind") && (typeof ep.kind !== "string" || ep.kind.length === 0)) ||
+        (Object.hasOwn(ep, "excerpt") && (typeof ep.excerpt !== "string" || ep.excerpt.length > 1200))) {
       return invalid(`invalid episode ${key}`);
     }
+    // Preserve legacy timestamp values, including malformed ones: temporal
+    // retrieval already treats them as unknown. Loading memory must not
+    // fabricate dates or make an otherwise readable old store unusable.
     // Spread creates own data properties, even for prototype-shaped keys.
     store.episodic[key] = { ...ep, headings: [...ep.headings] } as unknown as Episode;
   }

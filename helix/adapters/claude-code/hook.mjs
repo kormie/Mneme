@@ -14,7 +14,7 @@
 // memory store itself. It also prints nothing to stdout: on
 // UserPromptSubmit, hook stdout would be injected into the model context.
 import { connect } from "node:net";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -27,6 +27,14 @@ function packetFor(hook) {
   const t = Date.now();
   const base = { id: `cc-${t}-${randomUUID().slice(0, 8)}`, t, channel: "claude-code" };
   if (hook.hook_event_name === "UserPromptSubmit" && typeof hook.prompt === "string") {
+    // Harness chrome, not the human: Claude Code injects a literal
+    // "<task-notification>" turn when background work reports back. The
+    // payload carries no field marking injected turns, so the sensor
+    // drops that one exact text (trimmed) and observes nothing. This is
+    // an identity check on the whole prompt, not prose parsing: no
+    // other string is interpreted, and no denylist grows here without
+    // the steward.
+    if (hook.prompt.trim() === "<task-notification>") return null;
     return { ...base, kind: "user-prompt", text: hook.prompt };
   }
   if (hook.hook_event_name === "Stop") {
@@ -44,7 +52,12 @@ function packetFor(hook) {
 function spool(packet) {
   try {
     mkdirSync(SPOOL, { recursive: true });
-    writeFileSync(join(SPOOL, `${packet.id}.json`), JSON.stringify(packet) + "\n");
+    // Written under a .tmp name and renamed into place: a sweep (the
+    // listener's, or the operator's dogfood run) filters on .json, so it
+    // never reads a half-written packet and sidelines it as .bad.
+    const file = join(SPOOL, `${packet.id}.json`);
+    writeFileSync(`${file}.tmp`, JSON.stringify(packet) + "\n");
+    renameSync(`${file}.tmp`, file);
   } catch {
     // Even a failed spool exits 0: dropping one observation is better
     // than breaking the operator's session.

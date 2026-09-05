@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "bun:test";
+import { emptyCore } from "../src/core.js";
 import { loadKernel } from "../src/kernel.js";
 import { projectKernel } from "../src/lean-kernel.js";
 import * as laws from "../src/laws.js";
@@ -172,7 +173,7 @@ describe("judge: INV-ATTACKS-RED (five predicates, not the bundled theorem — S
 
 describe("judge: tray fixture trace (item is slice-local, never a RuntimeCertificate)", () => {
   const storeFile = join(mkdtempSync(join(tmpdir(), "judge-tray-")), "tray.json");
-  const report = runTray(FIXTURES, storeFile, kernel);
+  const report = runTray(FIXTURES, storeFile, emptyCore(), kernel);
   const j = judge(kernel, report.trace.events);
   const byId = new Map(j.rows.map((r) => [r.id, r]));
 

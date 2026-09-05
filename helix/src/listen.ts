@@ -24,13 +24,13 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
-import { defaultBufferFile } from "./buffer-path.js";
+import { defaultBufferFile, resolveSockPath, resolveSpoolDir } from "./buffer-path.js";
 import { loadKernel, type KernelIR } from "./kernel.js";
 import { makeEmitter, runGraph, type Emitter } from "./scheduler.js";
 import type { AnomalyFlag, AnomalyMatch } from "./anomaly.js";
 import { parseObservation, type Observation } from "./observation.js";
 import { sensoryAppliers, type SensedObs } from "./sensory.js";
-import { writeTrace } from "./tray.js";
+import { writeTrace } from "./trace-io.js";
 import { countType, makeTraceFile, scheduleNonempty, validTrace } from "./trace.js";
 
 export interface SenseResult {
@@ -40,7 +40,11 @@ export interface SenseResult {
   flag: AnomalyFlag | null;
 }
 
-/** One pg-s2w invocation over a batch of packets (ingress `raw`). */
+/** One pg-s2w invocation over a batch of packets (ingress `raw`). The
+ * sensory boundary is Core-free: this senses under the hardcoded empty
+ * identity and never loads the Core file — the tray's spool sweep
+ * reuses this exact pass, and the drain re-screens under the loaded
+ * Core afterwards. */
 export function senseBatch(
   kernel: KernelIR,
   packets: Observation[],
@@ -80,19 +84,35 @@ export function drainSpool(spoolDir: string): Observation[] {
   const packets: Observation[] = [];
   for (const name of names) {
     const file = join(spoolDir, name);
-    const packet = parseObservation(readFileSync(file, "utf8"));
-    if (packet === null) {
-      renameSync(file, `${file}.bad`);
-      continue;
+    // A running listener sweeps this same directory every five seconds,
+    // and the tray's dogfood sweep may race it: a file that vanishes
+    // between readdir and read (or read and unlink) was simply consumed
+    // by the other sweeper. Memory is keyed by packet id, so whichever
+    // sweeper won, the packet is buffered once and drained idempotently.
+    let text: string;
+    try {
+      text = readFileSync(file, "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw err;
     }
-    packets.push(packet);
-    unlinkSync(file);
+    const packet = parseObservation(text);
+    try {
+      if (packet === null) renameSync(file, `${file}.bad`);
+      else unlinkSync(file);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      continue; // the other sweeper got there first
+    }
+    if (packet !== null) packets.push(packet);
   }
   return packets;
 }
 
 export interface BatchReport {
-  /** Packet ids appended to the sensory buffer (clean, in slot or deferred). */
+  /** Packet ids appended to the sensory buffer: everything clean, whether
+   * it bound into a slot, deferred over budget, or — like session
+   * punctuation below the gate's threshold — was observed only. */
   accepted: string[];
   quarantined: AnomalyMatch[];
   deferred: string[];
@@ -161,8 +181,8 @@ interface ListenOptions {
 function defaults(): ListenOptions {
   const base = join(homedir(), ".mneme");
   return {
-    sockPath: join(base, "helix.sock"),
-    spoolDir: join(base, "spool"),
+    sockPath: resolveSockPath(base),
+    spoolDir: resolveSpoolDir(base),
     bufferFile: defaultBufferFile(base),
     traceFile: join(HELIX_ROOT, "traces", "listen.json"),
     maxSlots: 64,
