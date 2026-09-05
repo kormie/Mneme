@@ -39,8 +39,27 @@ export function headings(text: string): string[] {
     .filter((h): h is string => h !== undefined);
 }
 
+/**
+ * A heading-less packet — every ordinary Claude Code prompt — has no
+ * author-written summary, so its first line stands in as the title.
+ * That line is prose, and the store is meant to hold tokens, so it is
+ * clipped here at ingest: at most TITLE_MAX characters, cut back to the
+ * last word boundary, nothing appended. Headings are not clipped — the
+ * human wrote them as summaries. The clip is a named constant in a
+ * non-frozen transform stand-in, revertible in one line.
+ */
+export const TITLE_MAX = 120;
+
+export function clipTitle(line: string): string {
+  if (line.length <= TITLE_MAX) return line;
+  const head = line.slice(0, TITLE_MAX);
+  const cut = head.search(/\s\S*$/u);
+  return (cut > 0 ? head.slice(0, cut) : head).trimEnd();
+}
+
 export function firstLine(text: string): string | null {
-  return text.split("\n").find((l) => l.trim() !== "")?.trim() ?? null;
+  const line = text.split("\n").find((l) => l.trim() !== "")?.trim();
+  return line === undefined ? null : clipTitle(line);
 }
 
 export function sensoryAppliers(): Appliers {

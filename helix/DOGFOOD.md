@@ -216,11 +216,15 @@ Ask mode runs the declared pg-w2l read path (`query → hybrid → rerank →
 inject`) over your store — deterministic lexical retrieval across note
 names, titles, headings, and extracted triples; no model, no network,
 and its trace (`helix/traces/ask.json`) contains no `store.write` and
-needs no permit. A note is remembered by its filename, title (the first
-heading, or the first line when a note has none), headings, and a capped
-bag of its body keywords — accent-folded, so "reunion" finds "réunion".
-The store holds those tokens, never the prose itself. `--store` points
-both modes at a different memory file if you want separate trays.
+needs no permit. A note is remembered by its filename, title, headings,
+and a capped bag of its body keywords — accent-folded, so "reunion"
+finds "réunion". The title is the first heading when there is one,
+kept whole because you wrote it as a summary; a heading-less packet
+(every ordinary Claude Code prompt) has no summary, so its first line
+stands in, clipped at 120 characters on a word boundary. That clipped
+first line is the one fragment of prose the store keeps; everything
+else is tokens, never the prose itself. `--store` points both modes at
+a different memory file if you want separate trays.
 
 Dates are explicit deterministic inputs; Helix never consults the wall
 clock for a query. A question may name one period:
@@ -351,7 +355,9 @@ Send answers (or a screenshot of your run) to Kormie (@kormie):
    about your own notes that a folder listing would not have?
 2. **Creepy?** Was there any moment the tray felt like it overstepped —
    read too much, inferred too much, or kept something you did not expect
-   it to keep?
+   it to keep? (The one fragment of prose it keeps is a heading-less
+   packet's first line, clipped at 120 characters; say if that is too
+   much, or too little to recognise a prompt by.)
 3. **Missing Core clause?** With an empty Core every commit passed;
    `human-utterance-only` is the first switch you can flip in your own
    `core.json`. What is the next clause you wished had been there to
