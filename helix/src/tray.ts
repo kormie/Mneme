@@ -1405,7 +1405,7 @@ function main(): void {
     if (json) {
       // For a fleet asking "is the loop alive on this machine": the same
       // inspection as data. Counts and dates only, never packet text.
-      console.log(JSON.stringify({ core: { file: corePath, values: core.values }, paths, status: trayStatus(paths) }, null, 2));
+      console.log(JSON.stringify({ mode: "status", core: { file: corePath, values: core.values }, paths, status: trayStatus(paths) }, null, 2));
       return;
     }
     console.log(coreLine);
@@ -1462,9 +1462,10 @@ function main(): void {
       console.log(JSON.stringify({
         mode: "journal", question: report.question, store: storeFile, storeNotes: report.storeNotes,
         observationInterval: report.observationInterval, undatedExcluded: report.undatedExcluded,
-        entries: journalLines(report.hits, report.observationInterval).slice(0, shown),
+        limit: shown, entries: journalLines(report.hits, report.observationInterval).slice(0, shown),
         omitted: Math.max(0, report.hits.length - shown),
-        trace: { file: outFile, events: report.trace.events.length, readOnly: true }, checks: report.checks,
+        trace: { file: outFile, events: report.trace.events.length,
+          readOnly: !report.trace.events.some((event) => event.type === "store.write") }, checks: report.checks,
       }, null, 2));
       if (!checksOk(report.checks)) process.exitCode = 1;
       return;
@@ -1495,9 +1496,10 @@ function main(): void {
       console.log(JSON.stringify({
         mode: "ask", question: report.question, store: storeFile, storeNotes: report.storeNotes,
         ...(report.observationInterval === undefined ? {} : { observationInterval: report.observationInterval }),
-        undatedExcluded: report.undatedExcluded, hits: report.hits.slice(0, shown),
+        undatedExcluded: report.undatedExcluded, limit: shown, hits: report.hits.slice(0, shown),
         omitted: Math.max(0, report.hits.length - shown),
-        trace: { file: outFile, events: report.trace.events.length, readOnly: true }, checks: report.checks,
+        trace: { file: outFile, events: report.trace.events.length,
+          readOnly: !report.trace.events.some((event) => event.type === "store.write") }, checks: report.checks,
       }, null, 2));
       if (!checksOk(report.checks)) process.exitCode = 1;
       return;

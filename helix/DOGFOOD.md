@@ -263,7 +263,9 @@ structured results instead of prose. This changes presentation only:
 the declared read path, trace bytes, and underlying hit order stay the
 same. `--limit` caps the returned `hits` or `entries`, and `omitted`
 reports how many results remain. Journal entries retain the ascending
-display order described above.
+display order described above. Ask JSON defaults to five hits, matching
+the prose view; journal JSON defaults to all entries. The `limit` field
+always reports the effective cap.
 
 Ask mode runs the declared pg-w2l read path (`query → hybrid → rerank →
 inject`) over your store — deterministic lexical retrieval across note

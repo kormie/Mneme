@@ -154,9 +154,10 @@ describe("--journal on the CLI", () => {
     const { stdout, stderr } = await run("bun", [TRAY, "--journal", "this week", "--json", "--limit", "2",
       "--as-of", "2026-09-05", "--store", storeFile, "--core", join(dir, "no-core.json"), "--out", out]);
     expect(stderr).toBe("");
-    const parsed = JSON.parse(stdout) as { mode: string; entries: { note: string }[]; omitted: number; trace: { file: string } };
-    expect(parsed).toMatchObject({ mode: "journal", entries: [{ note: "cc-mon-a" }, { note: "cc-wed-a" }],
-      omitted: 3, trace: { file: out } });
+    const parsed = JSON.parse(stdout) as { mode: string; limit: number; entries: { note: string }[]; omitted: number; trace: { file: string; readOnly: boolean } };
+    expect(parsed).toMatchObject({ mode: "journal", limit: 2, entries: [{ note: "cc-mon-a" }, { note: "cc-wed-a" }],
+      trace: { file: out, readOnly: true },
+      omitted: 3 });
     expect(stdout).not.toContain("journal:");
   });
 });
