@@ -21,6 +21,10 @@ export interface Episode {
    * writing under a provenance clause, passed under an empty Core.
    * Already-committed entries are not re-audited. Never defaulted. */
   kind?: string;
+  /** Time at which the adapter observed the source, in Unix milliseconds.
+   * For the file channel this is the file's mtime. It is not an event or
+   * authorship date. Absent in legacy stores and never defaulted. */
+  observationTimeMs?: number;
 }
 
 export interface Triple {

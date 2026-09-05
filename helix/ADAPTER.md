@@ -28,7 +28,7 @@ One wire schema, five fields, no other packet shape:
 
 - `id` — unique per packet. Delivery is at-least-once; downstream memory
   is keyed, so a re-delivered id replaces rather than duplicates.
-- `t` — milliseconds since the Unix epoch, the adapter's own clock.
+- `t` — Date-representable milliseconds since the Unix epoch, the adapter's own clock.
 - `channel` — `file` or `claude-code` (the closed set for this slice).
 - `kind` — what the channel saw: `note`, `user-prompt`, `session-stop`.
 - `text` — the observed text, verbatim. Never parsed to route or branch.

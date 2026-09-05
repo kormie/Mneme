@@ -27,6 +27,12 @@ function fixturePacket(): Observation {
 }
 
 describe("the L0 sensory buffer drains into tray LTM", () => {
+  it("rejects adapter times outside JavaScript's representable Date range", () => {
+    expect(isObservation({
+      id: "future", t: 8.64e15 + 1, channel: "claude-code", kind: "user-prompt", text: "hi",
+    })).toBe(false);
+  });
+
   it("drains a fixture claude-code packet under consume-once permits, idempotently", () => {
     // A temp buffer holding exactly what the listener would have appended.
     const packet = fixturePacket();
