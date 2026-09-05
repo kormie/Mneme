@@ -53,7 +53,7 @@ one permit-gated write path `bun run dogfood` runs.
    before any drain), sweeps `~/.mneme/spool` through pg-s2w into
    `~/.mneme/buffer.jsonl` (the listener's `--once` pass; quarantined
    packets are dropped, never buffered), then resolves the source itself
-   (buffer first, inbox fallback to `~/mneme-tray`), drains it through the
+   (the buffer and the `~/mneme-tray` inbox together), drains it through the
    permit-gated write path (one `core.permit` per `store.write`, only
    `audit.inbox` exempt; commits the Core denies are refused per item
    and reported in the digest), writes the store and

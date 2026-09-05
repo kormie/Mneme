@@ -617,17 +617,24 @@ function scanBufferText(text: string): { packets: Observation[]; skipped: number
   return { packets: [...byId.values()], skipped };
 }
 
-export type DogfoodSource =
-  | { kind: "buffer"; packets: Observation[]; skipped: number }
-  | { kind: "inbox"; packets: Observation[] }
-  | { kind: "nothing"; skipped: number };
+export interface DogfoodSource {
+  /** Buffer packets first (in buffer order), then inbox notes (by name). */
+  packets: Observation[];
+  fromBuffer: number;
+  fromInbox: number;
+  /** Non-packet buffer lines ignored. */
+  skipped: number;
+}
 
 /**
- * Resolve the dogfood ingest source (DOGFOOD.md): the L0 sensory buffer
- * when it holds packets, else the documented inbox default, else
- * nothing. Unlike the explicit --buffer/--inbox modes, an absent or
- * empty source is an ordinary Monday, not an error: the caller prints
- * "nothing to drain" and invents no write.
+ * Resolve the dogfood ingest sources (DOGFOOD.md): everything the L0
+ * sensory buffer holds and every markdown note in the inbox, drained
+ * together in one run — a day's typed prompts and a day's dropped notes
+ * are one backlog. Unlike the explicit --buffer/--inbox modes, absent or
+ * empty sources are an ordinary Monday, not an error: the caller prints
+ * "nothing to drain" and invents no write. Ids never collide across the
+ * two channels (packet ids versus note filenames), so nothing is counted
+ * twice.
  */
 export function dogfoodSource(bufferFile: string, inboxDir: string): DogfoodSource {
   let text: string | null;
@@ -637,10 +644,13 @@ export function dogfoodSource(bufferFile: string, inboxDir: string): DogfoodSour
     text = null;
   }
   const scan = text === null ? { packets: [], skipped: 0 } : scanBufferText(text);
-  if (scan.packets.length > 0) return { kind: "buffer", ...scan };
   const notes = scanInbox(inboxDir);
-  if (notes.length > 0) return { kind: "inbox", packets: notes };
-  return { kind: "nothing", skipped: scan.skipped };
+  return {
+    packets: [...scan.packets, ...notes],
+    fromBuffer: scan.packets.length,
+    fromInbox: notes.length,
+    skipped: scan.skipped,
+  };
 }
 
 /**
@@ -978,7 +988,7 @@ function runDogfood(
   const src = dogfoodSource(bufferFile, inboxDir);
   console.log(coreLine);
   printSweep(sweep, spoolDir, bufferFile);
-  if (src.kind === "nothing") {
+  if (src.packets.length === 0) {
     console.log("dogfood: nothing to drain");
     console.log(`  buffer ${bufferFile}: absent or no packets` +
       (src.skipped > 0 ? ` (${src.skipped} non-packet line(s) ignored)` : ""));
@@ -997,10 +1007,13 @@ function runDogfood(
 
   const report = drainPackets(src.packets, storeFile, core, kernel, maxSlots, emitter);
   writeTrace(report.trace, outFile);
-  const sourceLine = src.kind === "buffer"
-    ? `dogfood: ${report.notes.length} packet(s) from buffer ${bufferFile}` +
-      (src.skipped > 0 ? ` (${src.skipped} non-packet line(s) skipped)` : "")
-    : `dogfood: ${report.notes.length} note(s) from inbox ${inboxDir} (buffer empty)`;
+  const parts = [
+    `${src.fromBuffer} packet(s) from buffer ${bufferFile}` +
+      (src.skipped > 0 ? ` (${src.skipped} non-packet line(s) skipped)` : "") +
+      (src.fromBuffer === 0 ? " (buffer empty)" : ""),
+    `${src.fromInbox} note(s) from inbox ${inboxDir}` + (src.fromInbox === 0 ? " (inbox empty)" : ""),
+  ];
+  const sourceLine = `dogfood: ${parts.join(" + ")}`;
   const drainOk = printDrainDigest(report, sourceLine, storeFile, outFile);
 
   console.log("");
@@ -1126,7 +1139,7 @@ function main(): void {
     if (asOf !== null) throw new Error("--as-of is only valid with --ask");
     if (utcOffset !== null) throw new Error("--utc-offset is only valid with --ask");
     // With --dogfood, --spool, --buffer and --inbox merely relocate the
-    // documented defaults; source preference (buffer first) stays the same.
+    // documented defaults; buffer and inbox drain together.
     const mnemeHome = join(homedir(), ".mneme");
     process.exitCode = runDogfood(
       spool ?? defaultSpoolDir(mnemeHome),

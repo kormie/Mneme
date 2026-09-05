@@ -230,17 +230,38 @@ describe("--dogfood source resolution", () => {
       "--out", join(dir, "trace.json"),
       "--core", join(dir, "no-core.json"),
     ]);
+    expect(stdout).toContain("0 packet(s) from buffer");
     expect(stdout).toContain("(buffer empty)");
+    expect(stdout).toContain("1 note(s) from inbox");
     expect(stdout).toContain("safety: PASS");
     expect(Object.keys(loadStore(storeFile).episodic)).toEqual(["ep:monday.md"]);
   });
 
-  it("prefers a buffer with packets over a populated inbox", () => {
-    const dir = tmp("prefer");
+  it("drains buffer packets and inbox notes together, buffer first", async () => {
+    const dir = tmp("both");
     const bufferFile = join(dir, "buffer.jsonl");
+    const inbox = join(dir, "mneme-tray");
+    const storeFile = join(dir, "store.json");
     writeFileSync(bufferFile, JSON.stringify(fixturePacket()) + "\n");
-    const src = dogfoodSource(bufferFile, join(HELIX_ROOT, "fixtures", "tray"));
-    expect(src.kind).toBe("buffer");
+    mkdirSync(inbox, { recursive: true });
+    writeFileSync(join(inbox, "monday.md"), "# Monday\n\n## Done\n\n- dropped a note\n");
+    const src = dogfoodSource(bufferFile, inbox);
+    expect(src.packets.map((p) => p.id)).toEqual([fixturePacket().id, "monday.md"]);
+    expect(src).toMatchObject({ fromBuffer: 1, fromInbox: 1, skipped: 0 });
+    const { stdout } = await run("bun", [
+      TRAY, "--dogfood",
+      "--spool", join(dir, "no-spool"),
+      "--buffer", bufferFile,
+      "--inbox", inbox,
+      "--store", storeFile,
+      "--out", join(dir, "trace.json"),
+      "--core", join(dir, "no-core.json"),
+    ]);
+    expect(stdout).toContain(`1 packet(s) from buffer ${bufferFile} + 1 note(s) from inbox ${inbox}`);
+    expect(stdout).toContain("safety: PASS");
+    expect(Object.keys(loadStore(storeFile).episodic).sort()).toEqual(
+      [`ep:${fixturePacket().id}`, "ep:monday.md"].sort(),
+    );
   });
 
   it("drains nothing when buffer and inbox are both empty: exit 0, no write", async () => {
@@ -262,7 +283,9 @@ describe("--dogfood source resolution", () => {
     expect(existsSync(storeFile)).toBe(false); // no invented write
     expect(existsSync(outFile)).toBe(false);
     expect(dogfoodSource(bufferFile, join(dir, "no-inbox"))).toEqual({
-      kind: "nothing",
+      packets: [],
+      fromBuffer: 0,
+      fromInbox: 0,
       skipped: 0,
     });
   });

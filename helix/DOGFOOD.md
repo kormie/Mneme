@@ -148,9 +148,10 @@ the same buffer, so nothing is counted twice.
 One run, no flags: it loads your Core file first (`~/.mneme/core.json`;
 missing means an empty Core, malformed aborts before any drain) and
 prints which constitution applied; sweeps the spool as above; reads
-`~/.mneme/buffer.jsonl` if the buffer holds packets, else falls back to
-the documented inbox default `~/mneme-tray` (markdown notes you dropped
-by hand); drains whichever it found through
+everything in `~/.mneme/buffer.jsonl` and every markdown note in the
+documented inbox default `~/mneme-tray` (notes you dropped by hand) —
+a day's typed prompts and a day's dropped notes are one backlog, drained
+together, buffer first — through
 the one permit-gated write path (one `core.permit` consumed per
 `store.write`, only the `audit.inbox` report permit-exempt); writes the
 store and a `mneme.trace/v1` to `helix/traces/dogfood.json` — one trace
@@ -292,7 +293,7 @@ refuses the Graft shape outright):
    The hook still never commits, and retrieve-on-submit is still absent
    (ADAPTER.md).
 5. ✅ **The Monday-afternoon command** — `bun run dogfood` resolves the
-   source (buffer first, inbox fallback), drains it under consume-once
+   sources (buffer and inbox together), drains them under consume-once
    permits, judges the emitted trace with the untrusted judge (safety
    must pass; the two liveness gaps must stay fail), and prints the
    three feedback prompts. Empty sources drain nothing and invent no

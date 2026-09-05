@@ -81,8 +81,8 @@ Monday-afternoon loop is the hook plus one operator command
 
 ```sh
 cd helix
-bun run dogfood                            # sweep the spool, buffer first,
-                                           # inbox fallback, then judge
+bun run dogfood                            # sweep the spool, drain buffer
+                                           # and inbox together, then judge
 bun run tray --buffer ~/.mneme/buffer.jsonl   # or drain just the buffer
                                               # (no sweep)
 ```
