@@ -115,10 +115,16 @@ re-draining afterwards changes nothing.
 The adapter is `adapters/claude-code/hook.mjs` — dependency-free Node.
 Add both events to `~/.claude/settings.json`, with the absolute path to
 your clone. `bun run hook-snippet` prints exactly this block with your
-clone's path filled in (it prints only; it never edits `~/.claude`) —
-worth using, because a hook with a wrong path exits 0 like every other
+clone's path filled in (it prints only; it never edits `~/.claude`), and
+`bun run install-hook --write` merges it into that file for you —
+idempotent, every other key and hook preserved, the previous file kept
+as `settings.json.bak`; without `--write` it only shows what it would
+do, and an agent never passes `--write` on its own. Either is worth
+using, because a hook with a wrong path exits 0 like every other
 failure and captures nothing, silently. `bun run status` the next
-morning confirms packets arrived.
+morning confirms packets arrived (`--json` for a fleet check).
+`scripts/install-tray.sh --hook` does the whole install for one person,
+non-interactively, so a fleet tool can run it as the user.
 
 ```json
 {

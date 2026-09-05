@@ -137,6 +137,22 @@ describe("--status is a pure inspection", () => {
       .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("--spool is only valid with --dogfood or --status") });
   });
 
+  it("--json emits the same inspection as data, never packet text", async () => {
+    const w = world();
+    const { stdout } = await run("bun", [
+      TRAY, "--status", "--json",
+      "--spool", w.spool, "--buffer", w.buffer, "--inbox", w.inbox, "--store", w.store,
+      "--core", join(w.dir, "no-core.json"),
+    ]);
+    const parsed = JSON.parse(stdout) as { core: { values: string[] }; paths: { spoolDir: string }; status: { spool: { waiting: number; bad: number }; buffer: { packets: number }; store: { episodes: number } } };
+    expect(parsed.core.values).toEqual([]);
+    expect(parsed.paths.spoolDir).toBe(w.spool);
+    expect(parsed.status).toMatchObject({ spool: { waiting: 1, bad: 1 }, buffer: { packets: 3 }, store: { episodes: 1 } });
+    expect(stdout).not.toContain(w.sentinel);
+    await expect(run("bun", [TRAY, "--ask", "x", "--json", "--core", join(w.dir, "no-core.json"), "--store", w.store]))
+      .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("--json is only valid with --status") });
+  });
+
   it("exits 0 on an empty world and points at --ask", async () => {
     const dir = tmp("empty");
     const { stdout } = await run("bun", [

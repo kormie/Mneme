@@ -49,9 +49,10 @@ memory except by a command you run.
 ```sh
 cd helix && bun install
 
-# once: let Claude Code's hook observe your prompts. Prints the block
-# for ~/.claude/settings.json with this clone's path; paste it in.
-bun run hook-snippet
+# once: let Claude Code's hook observe your prompts. Shows the block for
+# ~/.claude/settings.json; --write merges it in (backup kept). Or run
+# ../scripts/install-tray.sh --hook, which does all of this for one person.
+bun run install-hook --write
 
 # work in Claude Code as usual; the hook spools each prompt. Drop any
 # markdown notes you write into ~/mneme-tray. Then, whenever you like:

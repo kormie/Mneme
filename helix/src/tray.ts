@@ -32,6 +32,7 @@ import {
   type CoreFile,
 } from "./core.js";
 import { clip } from "./display.js";
+import { hookCommand } from "./hook-install.js";
 import { renderJournal } from "./journal.js";
 import { judge, type Judgement } from "./judge.js";
 import { loadKernel, type KernelIR } from "./kernel.js";
@@ -1199,8 +1200,7 @@ function runDogfood(
 
 /** The hook block for ~/.claude/settings.json, with this clone's path. */
 export function hookSnippetJson(): string {
-  // Quoted, so a clone under a directory with a space still runs.
-  const command = `node ${JSON.stringify(join(HELIX_ROOT, "adapters", "claude-code", "hook.mjs"))}`;
+  const command = hookCommand(HELIX_ROOT);
   const entry = { hooks: [{ type: "command", command }] };
   return JSON.stringify({ hooks: { UserPromptSubmit: [entry], Stop: [entry] } }, null, 2);
 }
@@ -1227,6 +1227,7 @@ function main(): void {
   let limit: number | null = null;
   let dogfood = false;
   let status = false;
+  let statusJson = false;
   let hookSnippet = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i] as string;
@@ -1234,6 +1235,8 @@ function main(): void {
       dogfood = true;
     } else if (flag === "--status") {
       status = true;
+    } else if (flag === "--json") {
+      statusJson = true;
     } else if (flag === "--hook-snippet") {
       hookSnippet = true;
     } else if (
@@ -1312,6 +1315,7 @@ function main(): void {
   const reading = ask !== null || journal !== null;
   if (limit !== null && !reading) throw new Error("--limit is only valid with --ask or --journal");
 
+  if (statusJson && !status) throw new Error("--json is only valid with --status");
   if (status) {
     for (const [given, name] of [[asOf, "--as-of"], [utcOffset, "--utc-offset"], [out, "--out"]] as const) {
       if (given !== null) throw new Error(`${name} is not valid with --status (inspection only)`);
@@ -1328,6 +1332,12 @@ function main(): void {
       // says otherwise — the same rule the hook applies.
       sockPath: resolveSockPath(dirname(bufferFile)),
     };
+    if (statusJson) {
+      // For a fleet asking "is the loop alive on this machine": the same
+      // inspection as data. Counts and dates only, never packet text.
+      console.log(JSON.stringify({ core: { file: corePath, values: core.values }, paths, status: trayStatus(paths) }, null, 2));
+      return;
+    }
     console.log(coreLine);
     printStatus(trayStatus(paths), paths);
     return;

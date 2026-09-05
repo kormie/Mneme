@@ -191,20 +191,20 @@ list, and the org partition is 0.11-shaped (it needs the sealed
 provenance sidecar, because a note in a shared partition must carry
 who, where, and when in a form the writer cannot forge).
 
-**Not gated, and buildable in this slice — packaging:**
-
-- an idempotent, non-interactive installer (pinned bun, `bun install
-  --frozen-lockfile`, a per-user data directory, `helix/store` outside
-  the clone) that MDM can run as the user;
-- `hook-snippet` grown into an installer that merges the hook into
-  `~/.claude/settings.json` on request (today it only prints — the
-  print-only choice was made so an agent never edits the operator's
-  Claude settings; an MDM run is a different actor and needs an explicit
-  flag);
-- a launch agent / service unit for the listener, optional (the sweep
-  makes it unnecessary for correctness);
-- `--status --json` so a fleet can be asked "is the hook alive on this
-  machine" without a human reading prose.
+**Not gated, and buildable in this slice — packaging.** Landed in this
+PR: `scripts/install-tray.sh [--hook]` (non-interactive, idempotent,
+bun at the pinned version, `bun install --frozen-lockfile`, spec check;
+no Lean), `bun run install-hook --write` (merges the hook into
+`~/.claude/settings.json`, every other key and hook preserved, `.bak`
+kept, dry run without `--write` — the explicit flag is what separates a
+person's or a fleet's act from an agent's), and `bun run status --json`
+so a fleet can be asked "is the hook alive on this machine". Still to
+decide: a per-user data directory outside the clone (`--store` and
+`~/.mneme` already allow it; a default is a product choice), a launch
+agent for the listener (optional — the sweep makes it unnecessary for
+correctness), signing and distribution of the clone itself, and whether
+`scripts/bootstrap.sh` should share the bun step with the new script
+(it is steward-owned under CODEOWNERS, so left untouched here).
 
 **What the org partition needs before it exists:** the `origin` field
 (item 2) extended to `{ person, host, cwd, session }`; a decision on
