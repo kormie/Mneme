@@ -32,6 +32,7 @@ import {
   type CoreFile,
 } from "./core.js";
 import { clip } from "./display.js";
+import { renderJournal } from "./journal.js";
 import { judge, type Judgement } from "./judge.js";
 import { loadKernel, type KernelIR } from "./kernel.js";
 import { drainSpool, processBatch } from "./listen.js";
@@ -1040,6 +1041,7 @@ function main(): void {
   let out: string | null = null;
   let storeFile = join(HELIX_ROOT, "store", "tray.json");
   let ask: string | null = null;
+  let journal: string | null = null;
   let coreArg: string | null = null;
   let asOf: string | null = null;
   let utcOffset: string | null = null;
@@ -1055,8 +1057,8 @@ function main(): void {
       status = true;
     } else if (
       flag === "--inbox" || flag === "--buffer" || flag === "--spool" || flag === "--out" ||
-      flag === "--store" || flag === "--ask" || flag === "--core" || flag === "--as-of" ||
-      flag === "--utc-offset" || flag === "--max-slots" || flag === "--limit"
+      flag === "--store" || flag === "--ask" || flag === "--journal" || flag === "--core" ||
+      flag === "--as-of" || flag === "--utc-offset" || flag === "--max-slots" || flag === "--limit"
     ) {
       const value = args[++i];
       if (value === undefined) throw new Error(`missing value for ${flag}`);
@@ -1080,7 +1082,8 @@ function main(): void {
         }
         if (flag === "--max-slots") maxSlots = Number(value);
         else limit = Number(value);
-      } else ask = value;
+      } else if (flag === "--journal") journal = value;
+      else ask = value;
     } else {
       throw new Error(`unknown argument: ${flag}`);
     }
@@ -1108,10 +1111,15 @@ function main(): void {
     ? `core: ${corePath} (values: ${core.values.join(", ")})`
     : `core: ${corePath} (empty — no constitution, every salient commit passes)`;
 
-  const modes = [dogfood ? "--dogfood" : null, status ? "--status" : null, ask !== null ? "--ask" : null]
-    .filter((m): m is string => m !== null);
+  const modes = [
+    dogfood ? "--dogfood" : null,
+    status ? "--status" : null,
+    ask !== null ? "--ask" : null,
+    journal !== null ? "--journal" : null,
+  ].filter((m): m is string => m !== null);
   if (modes.length > 1) throw new Error(`choose one mode per run: ${modes.join(" or ")}`);
-  if (limit !== null && ask === null) throw new Error("--limit is only valid with --ask");
+  const reading = ask !== null || journal !== null;
+  if (limit !== null && !reading) throw new Error("--limit is only valid with --ask or --journal");
 
   if (status) {
     for (const [given, name] of [[asOf, "--as-of"], [utcOffset, "--utc-offset"], [out, "--out"]] as const) {
@@ -1155,14 +1163,41 @@ function main(): void {
   if (inbox !== null && buffer !== null) {
     throw new Error("choose one ingest source per run: --inbox or --buffer");
   }
-  if (asOf !== null && ask === null) {
-    throw new Error("--as-of is only valid with --ask");
+  if (asOf !== null && !reading) {
+    throw new Error("--as-of is only valid with --ask or --journal");
   }
-  if (utcOffset !== null && ask === null) {
-    throw new Error("--utc-offset is only valid with --ask");
+  if (utcOffset !== null && !reading) {
+    throw new Error("--utc-offset is only valid with --ask or --journal");
   }
-  if (maxSlots !== null && ask !== null) {
+  if (maxSlots !== null && reading) {
     throw new Error("--max-slots is only valid for a drain (--dogfood, --inbox, or --buffer)");
+  }
+
+  if (journal !== null) {
+    const report = runAsk(journal, storeFile, core, loadKernel(), asOf ?? undefined, utcOffset ?? undefined);
+    if (report.observationInterval === undefined) {
+      throw new Error(
+        'the journal needs a period: try "yesterday" or "this week" with --as-of YYYY-MM-DD, ' +
+          'or "on YYYY-MM-DD", or "between A and B"',
+      );
+    }
+    const outFile = out ?? join(HELIX_ROOT, "traces", "ask.json");
+    writeTrace(report.trace, outFile);
+    console.log(
+      `journal: ${describeInterval(report.observationInterval, asOf ?? undefined)} ` +
+        `— observation time [${report.observationInterval.start}, ${report.observationInterval.end}) ` +
+        `over ${report.storeNotes} remembered notes (${storeFile})`,
+    );
+    if (report.undatedExcluded > 0) {
+      console.log(`  ${report.undatedExcluded} undated or unreadable record(s) cannot appear in a journal`);
+    }
+    for (const line of renderJournal(report.hits, report.observationInterval, limit ?? undefined)) {
+      console.log(line);
+    }
+    console.log(`trace: ${outFile} (mneme.trace/v1, ${report.trace.events.length} events; read-only — no store.write, no permit needed)`);
+    console.log(`checks (untrusted TS mirrors, slice-local): ${checksOk(report.checks) ? "PASS" : "FAIL"}`);
+    if (!checksOk(report.checks)) process.exitCode = 1;
+    return;
   }
 
   if (ask !== null) {
@@ -1186,6 +1221,8 @@ function main(): void {
       console.log("  no memory yet — drop notes in the inbox and run an ingest first");
     } else if (report.hits.length === 0) {
       console.log("  no matches");
+    } else if (report.observationInterval !== undefined && report.hits.every((h) => h.matched.length === 0)) {
+      console.log("  tip: --journal renders a period like this as a day-by-day journal");
     }
     const shown = limit ?? 5;
     for (const h of report.hits.slice(0, shown)) {

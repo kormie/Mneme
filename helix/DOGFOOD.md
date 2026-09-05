@@ -210,7 +210,23 @@ bun run tray --ask "what did I write about deployment last week?" --as-of 2026-0
 bun run tray --ask "what did I ask yesterday" --as-of 2026-09-05 --utc-offset -04:00
 bun run tray --ask "canary on 2026-09-02"
 bun run tray --ask "between 2026-09-01 and 2026-09-03"
+
+# or as a day-by-day journal (the morning command):
+bun run journal "yesterday" --as-of 2026-09-05 --utc-offset -04:00
+bun run journal "this week" --as-of 2026-09-05
+bun run status                   # is the loop alive? what is waiting?
 ```
+
+The journal is the morning command. `bun run journal "yesterday"
+--as-of 2026-09-05 --utc-offset -04:00` runs the same read path as
+`--ask` and renders the result as days: one header per calendar day in
+the offset you gave, one line per remembered observation in ascending
+time — `19:30  claude-code/user-prompt  cc-…  "Ship the canary fix…"` —
+with `file/note` lines for dropped notes alongside. Topic words filter
+it (`bun run journal "canary this week" --as-of …`) and show what
+matched; `--limit` caps the lines. The journal needs a period; it never
+shows session-stop punctuation, because that is never remembered, and
+it writes the same read-only trace `--ask` does.
 
 Ask mode runs the declared pg-w2l read path (`query → hybrid → rerank →
 inject`) over your store — deterministic lexical retrieval across note

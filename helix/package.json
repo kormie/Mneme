@@ -15,6 +15,7 @@
     "dogfood": "bun src/tray.ts --dogfood",
     "ask": "bun src/tray.ts --ask",
     "status": "bun src/tray.ts --status",
+    "journal": "bun src/tray.ts --journal",
     "listen": "bun src/listen.ts",
     "judge": "bun src/judge.ts"
   },
