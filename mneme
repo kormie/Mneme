@@ -1,0 +1,9 @@
+#!/bin/sh
+# Resolve the checkout without changing the caller's relative input paths.
+set -eu
+mneme_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if ! command -v bun >/dev/null 2>&1; then
+  echo "mneme: Bun is required. Run $mneme_root/scripts/bootstrap.sh first." >&2
+  exit 1
+fi
+exec bun "$mneme_root/helix/src/daily.ts" "$@"

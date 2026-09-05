@@ -1,5 +1,10 @@
 # Desk-tray dogfood
 
+For the `./mneme` front door, sample demo, and daily profiles, start with
+[DAILY.md](DAILY.md). This guide documents the established lower-level
+tray commands, whose default store is `helix/store/tray.json`; the daily
+CLI uses `~/.mneme/store.json` and does not automatically import it.
+
 A small, local-only flavour of MNEME you can run on your own desk notes.
 You drop markdown files into an inbox directory; the Helix scheduler runs
 the declared kernel graphs over them (sensory → working → long-term, with
@@ -266,9 +271,10 @@ because you wrote those lines as summaries; a later `#` line is body
 text. A
 heading-less packet (every ordinary Claude Code prompt) has no summary,
 so its first line stands in, clipped at 120 characters on a word
-boundary. Body text never persists as prose: it becomes the capped
-keyword bag and nothing else. `--store` points both modes at a
-different memory file if you want separate trays.
+boundary. The store also keeps an exact source excerpt of up to 1,200
+characters alongside the capped keyword bag. Older entries without an
+excerpt remain readable; re-ingesting the source supplies one. `--store`
+points both modes at a different memory file if you want separate trays.
 
 Dates are explicit deterministic inputs; Helix never consults the wall
 clock for a query. A question may name one period:
@@ -313,8 +319,9 @@ you said about a topic comes first. A quoted phrase (`--ask '"code
 review"'`) requires every one of its words; when the phrase appears
 as you wrote it in a note's name, title, or a heading the hit says
 "adjacent" and scores higher, and when its words are only in the body
-keyword bag the hit says so, because body prose is never stored and
-adjacency there cannot be checked; a phrase made only of small words
+keyword bag the hit says so. Body excerpts are saved for lexical recall
+and display; the existing phrase scorer does not check adjacency in
+them. A phrase made only of small words
 ("last week", as words someone wrote) can only match adjacently. The
 wall clock stays in your shell: an alias such as
 `alias ask-today='bun run tray --as-of "$(date -u +%F)" --ask'` keeps
@@ -431,10 +438,10 @@ Send answers (or a screenshot of your run) to Kormie (@kormie):
    about your own notes that a folder listing would not have?
 2. **Creepy?** Was there any moment the tray felt like it overstepped —
    read too much, inferred too much, or kept something you did not expect
-   it to keep? (The prose it keeps is what you wrote as a summary —
-   headings, and a heading-less packet's first line clipped at 120
-   characters; say if that is too much, or too little to recognise a
-   prompt by.)
+   it to keep? (The prose it keeps includes headings, a heading-less
+   packet's first line clipped at 120 characters, and an exact source
+   excerpt of up to 1,200 characters; say if that is too much, or too
+   little to recognise a prompt by.)
 3. **Missing Core clause?** With an empty Core every commit passed;
    `human-utterance-only` is the first switch you can flip in your own
    `core.json`. What is the next clause you wished had been there to

@@ -132,12 +132,14 @@ function relativeInterval(label: string, anchorMs: number): Shifted {
  * Recognise at most one period in the question. Relative periods need
  * `asOf`; absolute ones do not (an `asOf` given alongside is simply not
  * needed). `asOf` or `utcOffset` given with no recognised period is an
- * error, never a silently unbounded result.
+ * error, never a silently unbounded result. The daily wrapper can set
+ * requirePeriod=false when supplying its clock automatically.
  */
 export function temporalQuery(
   question: string,
   asOf?: string,
   utcOffset?: string,
+  requirePeriod = true,
 ): TemporalQuery {
   const offsetGiven = utcOffset !== undefined;
   const offset = utcOffset ?? "+00:00";
@@ -192,6 +194,9 @@ export function temporalQuery(
   }
   const hit = found[0];
   if (hit === undefined) {
+    // A daily caller may supply its clock automatically. Explicit
+    // lower-level --as-of/--utc-offset flags still require a period.
+    if (!requirePeriod) return { residual: question };
     if (asOf !== undefined) {
       throw new Error(
         "--as-of was given but the question names no supported period; " +

@@ -1,8 +1,8 @@
 /**
  * The pg-s2w sensor-normalize stand-in (src/sensory.ts): titles and
  * headings derived from packet text. A heading-less packet's title is
- * its first line, clipped at TITLE_MAX on a word boundary — the one
- * place near-prose enters the store, and it is bounded here.
+ * its first line, clipped at TITLE_MAX on a word boundary. The tray's
+ * separate source excerpt has its own bound and never changes the title.
  */
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -54,8 +54,8 @@ describe("titles from packet text", () => {
   });
 
   it("stores the clipped title, and the `titled` triple equals it", () => {
-    const text = "Please " + "refactor the loader and ".repeat(12) + "then stop.";
-    expect(text.length).toBeGreaterThan(TITLE_MAX);
+    const text = "Please " + "refactor the loader and ".repeat(80) + "then stop.";
+    expect(text.length).toBeGreaterThan(1200);
     const packet: Observation = {
       id: "cc-long-0001", t: 1756000000000, channel: "claude-code", kind: "user-prompt", text,
     };
@@ -66,9 +66,15 @@ describe("titles from packet text", () => {
     expect(title.length).toBeLessThanOrEqual(TITLE_MAX);
     expect(text.startsWith(title)).toBe(true);
     expect(store.semantic["cc-long-0001"]).toContainEqual({ s: "cc-long-0001", p: "titled", o: title });
-    // Nothing in the store is longer than the clipped title except the
-    // bounded keyword bag, so no stored string carries the whole prompt.
+    // Source wording is retained separately, with its explicit 1200-character
+    // cap; the title and keyword entries retain their existing bounds.
+    expect(store.episodic["ep:cc-long-0001"]?.excerpt).toBe(text.slice(0, 1200));
+    expect(store.episodic["ep:cc-long-0001"]?.excerpt).toHaveLength(1200);
+    expect(store.semantic["cc-long-0001"]).toContainEqual({
+      s: "cc-long-0001", p: "excerpt", o: text.slice(0, 1200),
+    });
     for (const t of store.semantic["cc-long-0001"] ?? []) {
+      if (t.p === "excerpt") continue;
       expect(t.o.length).toBeLessThanOrEqual(TITLE_MAX);
     }
   });

@@ -92,11 +92,28 @@ export interface Hit {
   via?: Record<string, string>;
   /** For each quoted phrase in the ask: "adjacent" when the folded phrase
    * appears as-is in the note id, title, or a heading; "all-words" when
-   * every word is present but adjacency cannot be checked (body prose is
-   * never stored). A note missing any word of a phrase is not a hit. */
+   * every word is present without an adjacency match in those fields.
+   * Body excerpts contribute lexical evidence, not an adjacency boost.
+   * A note missing any word of a phrase is not a hit. */
   phrases?: Record<string, "adjacent" | "all-words">;
   triples: Triple[];
   observationTimeMs?: number;
+  excerpt?: string;
+  channel?: string;
+}
+
+/** Optional operator filters, carried on slots through the declared query
+ * edge. Numeric bounds intersect any period recognised in the question. */
+export interface DailyAskOptions {
+  /** Optional operator clock for daily queries; ignored when no period
+   * occurs. Explicit --as-of/--utc-offset behaviour stays unchanged. */
+  clock?: { asOf: string; utcOffset: string };
+  /** Inclusive observation times, in milliseconds since the Unix epoch. */
+  since?: number;
+  until?: number;
+  limit?: number;
+  /** Most recent first; permits an empty question to browse memory. */
+  recent?: boolean;
 }
 
 export interface Phrase {
@@ -150,7 +167,7 @@ function fold(text: string): string {
 }
 
 function tokens(text: string): string[] {
-  return [...new Set(fold(text).split(/[^\p{L}\p{N}]+/u).filter((t) => t.length >= 3))];
+  return [...new Set(fold(text).split(/[^\p{L}\p{N}]+/u).filter((t) => t.length >= 2))];
 }
 
 /** Question words carry no signal; drop them from queries, not haystacks.
@@ -162,6 +179,8 @@ const STOPWORDS = new Set([
   "do", "the", "and", "for", "with", "about", "was", "were", "are", "you",
   "your", "have", "has", "had", "this", "that", "note", "notes", "write",
   "wrote", "written", "say", "said", "happened",
+  "is", "to", "on", "in", "of", "it", "as", "at", "be", "by", "or", "an",
+  "we", "my", "me", "us", "up", "if", "so",
 ]);
 
 /** Words that are noise in a question but may be content in a note
@@ -186,12 +205,12 @@ function validObservationTime(value: unknown): number | undefined {
 /**
  * The most frequent body words (folded, stopwords out, capped so a huge
  * note cannot flood the store). These become "mentions" triples — a bag
- * of words, deliberately not the prose itself.
+ * of words. A separate bounded excerpt preserves source wording.
  */
 function bodyKeywords(text: string, cap = 64): string[] {
   const counts = new Map<string, number>();
   for (const t of fold(text).split(/[^\p{L}\p{N}]+/u)) {
-    if (t.length < 3 || STOPWORDS.has(t)) continue;
+    if (t.length < 2 || STOPWORDS.has(t)) continue;
     counts.set(t, (counts.get(t) ?? 0) + 1);
   }
   return [...counts.entries()]
@@ -204,6 +223,19 @@ function bodyKeywords(text: string, cap = 64): string[] {
  * enum is exactly this list; the ValueFilter stand-in throws on anything
  * else (fail closed), and no predicate is added here without Kormie. */
 const IMPLEMENTED_VALUES = ["human-utterance-only"] as const;
+
+/** Shared CLI startup check; the ValueFilter retains its own check. */
+export function assertSupportedCore(core: CoreFile, corePath: string): void {
+  const unknownValues = core.values.filter(
+    (v) => !(IMPLEMENTED_VALUES as readonly string[]).includes(v),
+  );
+  if (unknownValues.length > 0) {
+    throw new Error(
+      `${corePath}: cannot interpret core value(s): ${unknownValues.join(", ")} ` +
+        `(implemented: ${IMPLEMENTED_VALUES.join(", ")})`,
+    );
+  }
+}
 
 /** The provenance kinds "human-utterance-only" admits: things the human
  * actually typed or dropped, discriminated on the declared kind field
@@ -255,9 +287,9 @@ export function trayAppliers(
     // --- pg-w2l write path: slots → LTM commits -----------------------
     "pg-w2l/episode": (inputs) => {
       const trace = inputs.trace as { slots: { obs: SensedObs }[] };
-      // Working episodes carry the note text for semantic extraction;
-      // the persisted Episode never does (conflict rebuilds it from
-      // triples, so only tokens reach the store).
+      // Working episodes carry source text for extraction. The bounded
+      // excerpt reaches persistence through the declared triples edge,
+      // alongside the existing title and observation provenance.
       const episodes = trace.slots.map(({ obs }) => ({
         id: `ep:${obs.id}`,
         note: obs.id,
@@ -267,6 +299,7 @@ export function trayAppliers(
         kind: obs.kind,
         observationTimeMs: obs.t,
         text: obs.text,
+        excerpt: obs.text.slice(0, 1200),
       }));
       return { episodes };
     },
@@ -276,12 +309,13 @@ export function trayAppliers(
       decision: "keep",
     }),
     // Offline stand-in: syntactic triples — title, headings, and a
-    // capped bag of body keywords so ordinary prose is searchable.
+    // capped bag of body keywords and an exact bounded source excerpt.
     "pg-w2l/semantic": (inputs) => {
       const kept = inputs.kept as (Episode & { text?: string })[];
       const triples: Triple[] = kept.flatMap((ep) => [
         { s: ep.note, p: "titled", o: ep.title },
         { s: ep.note, p: "channel", o: ep.channel ?? "file" },
+        ...(ep.excerpt === undefined ? [] : [{ s: ep.note, p: "excerpt", o: ep.excerpt }]),
         // The kind triple mirrors the channel triple, but never defaults:
         // a missing kind stays missing (unknown), because inventing one
         // would let a provenance clause pass on made-up provenance.
@@ -309,6 +343,7 @@ export function trayAppliers(
       const items: WriteItem[] = [...byNote.keys()].sort().flatMap((note): WriteItem[] => {
         const ts = byNote.get(note)!;
         const kind = ts.find((t) => t.p === "kind")?.o;
+        const excerpt = ts.find((t) => t.p === "excerpt")?.o;
         const observationTimeText = ts.find((t) => t.p === "observation-time-ms")?.o;
         const observationTimeMs = observationTimeText === undefined ||
             !/^-?\d+$/.test(observationTimeText)
@@ -323,6 +358,7 @@ export function trayAppliers(
           channel: ts.find((t) => t.p === "channel")?.o ?? "file",
           // No kind triple, no kind field: unknown stays unknown.
           ...(kind === undefined ? {} : { kind }),
+          ...(excerpt === undefined ? {} : { excerpt }),
           ...(normalizedObservationTimeMs === undefined
             ? {}
             : { observationTimeMs: normalizedObservationTimeMs }),
@@ -367,7 +403,7 @@ export function trayAppliers(
 
     // --- pg-w2l read path: question → hits over the local store ------
     "pg-w2l/query": (inputs) => {
-      const slots = inputs.slots as { text: string; asOf?: string; utcOffset?: string }[];
+      const slots = inputs.slots as { text: string; asOf?: string; utcOffset?: string; options?: DailyAskOptions }[];
       const text = slots.map((s) => s.text).join(" ");
       // The period phrase is recognised first and excised, so its own
       // words ("yesterday", a date literal) never become lexical
@@ -377,12 +413,16 @@ export function trayAppliers(
       // week", as words someone wrote) is a phrase, not a filter; the
       // period is then recognised on what remains.
       const { phrases, rest } = extractPhrases(text);
-      const temporal = temporalQuery(rest, slots[0]?.asOf, slots[0]?.utcOffset);
+      const clock = slots[0]?.options?.clock;
+      const temporal = temporalQuery(rest, slots[0]?.asOf ?? clock?.asOf,
+        slots[0]?.utcOffset ?? clock?.utcOffset,
+        clock === undefined || slots[0]?.asOf !== undefined || slots[0]?.utcOffset !== undefined);
       return {
         query: {
           tokens: queryTokens(temporal.residual),
           phrases,
           temporal,
+          options: slots[0]?.options ?? {},
           indexes: ["episodic", "semantic"],
         },
       };
@@ -392,7 +432,9 @@ export function trayAppliers(
         tokens: string[];
         phrases: Phrase[];
         temporal: { interval?: ObservationInterval };
+        options?: DailyAskOptions;
       };
+      const options = query.options ?? {};
       const episodic = inputs.episodic as Episode[];
       const semantic = inputs.semantic as Triple[];
       ctx.emit({ type: "store.read", store: "episodic", keys: episodic.map((e) => e.id) });
@@ -400,13 +442,13 @@ export function trayAppliers(
       // Deterministic lexical scoring in the declared hybrid transform.
       // Two haystacks per note: the strong one is what the human wrote as
       // a name or summary (note id, title, headings); the weak one is the
-      // stored body keyword bag. Provenance triples never take part.
+      // stored body keyword bag and excerpt. Provenance triples never take part.
       const hits: Hit[] = episodic
         .map((ep) => {
           const ts = semantic.filter((t) => t.s === ep.note);
           const strong = tokens([ep.note, ep.title, ...ep.headings].join(" "));
           const weak = tokens(
-            ts.filter((t) => !METADATA_PREDICATES.has(t.p)).map((t) => t.o).join(" "),
+            [ep.excerpt ?? "", ...ts.filter((t) => !METADATA_PREDICATES.has(t.p)).map((t) => t.o)].join(" "),
           );
           let score = 0;
           const matched: string[] = [];
@@ -423,11 +465,9 @@ export function trayAppliers(
             return true;
           };
           for (const q of query.tokens) scoreToken(q);
-          // A quoted phrase requires every one of its words. Adjacency can
-          // only be checked against what is stored as a string — the
-          // note id, title, and headings — because body prose never
-          // persists; a phrase found only in the keyword bag is reported
-          // as "all words", never claimed as adjacent.
+          // Preserve the phrase policy: adjacency boosts names, titles,
+          // and headings. Body evidence requires all content words and
+          // is reported as "all words", including when an excerpt exists.
           const phrases: Record<string, "adjacent" | "all-words"> = {};
           let phrasesSatisfied = true;
           const strings = [ep.note, ep.title, ...ep.headings].map(phraseText);
@@ -454,6 +494,8 @@ export function trayAppliers(
             ...(matched.length === 0 ? {} : { via }),
             ...(Object.keys(phrases).length === 0 ? {} : { phrases }),
             triples: ts,
+            channel: ep.channel ?? "file",
+            ...(ep.excerpt === undefined ? {} : { excerpt: ep.excerpt }),
             ...(observationTimeMs === undefined ? {} : { observationTimeMs }),
           };
         })
@@ -464,19 +506,21 @@ export function trayAppliers(
             if (h.observationTimeMs === undefined) return false;
             if (h.observationTimeMs < interval.startMs || h.observationTimeMs >= interval.endMs) return false;
           }
+          if (options.since !== undefined && (h.observationTimeMs === undefined || h.observationTimeMs < options.since)) return false;
+          if (options.until !== undefined && (h.observationTimeMs === undefined || h.observationTimeMs > options.until)) return false;
           return query.tokens.length === 0 && query.phrases.length === 0
-            ? interval !== undefined
+            ? interval !== undefined || options.recent === true
             : h.score > 0;
         })
         // Score, then newest observation first (undated last), then note
         // id: the same total order for every ask, so "what did I say
         // about X" surfaces the latest occurrence.
-        .sort((a, b) =>
-          b.score - a.score ||
-          (b.observationTimeMs ?? -Infinity) - (a.observationTimeMs ?? -Infinity) ||
-          (a.note < b.note ? -1 : a.note > b.note ? 1 : 0)
-        );
-      return { hits };
+        .sort((a, b) => {
+          const byTime = (b.observationTimeMs ?? -Infinity) - (a.observationTimeMs ?? -Infinity);
+          return (options.recent ? byTime || b.score - a.score : b.score - a.score || byTime) ||
+            (a.note < b.note ? -1 : a.note > b.note ? 1 : 0);
+        });
+      return { hits: options.limit === undefined ? hits : hits.slice(0, options.limit) };
     },
     // Offline stand-in: hybrid's order is already deterministic; a real
     // rerank is a Core-constrained prompt.
@@ -923,7 +967,19 @@ export function runAsk(
   kernel: KernelIR = loadKernel(),
   asOf?: string,
   utcOffset?: string,
+  options: DailyAskOptions = {},
 ): AskReport {
+  for (const key of ["since", "until"] as const) {
+    if (options[key] !== undefined && !Number.isFinite(options[key])) {
+      throw new Error(`${key} must be a finite observation timestamp`);
+    }
+  }
+  if (options.since !== undefined && options.until !== undefined && options.since > options.until) {
+    throw new Error("since must be at or before until");
+  }
+  if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1)) {
+    throw new Error("limit must be a positive integer");
+  }
   const store = loadStore(storeFile);
   const episodic = Object.keys(store.episodic).sort().map((k) => store.episodic[k]!);
   const semantic = Object.keys(store.semantic).sort().flatMap((k) => store.semantic[k]!);
@@ -937,6 +993,7 @@ export function runAsk(
       slots: [{
         id: "slot:ask",
         text: question,
+        options,
         ...(asOf === undefined ? {} : { asOf }),
         ...(utcOffset === undefined ? {} : { utcOffset }),
       }],
@@ -961,7 +1018,7 @@ export function runAsk(
     trace,
     checks: runChecks(kernel, trace),
     ...(observationInterval === undefined ? {} : { observationInterval }),
-    undatedExcluded: observationInterval === undefined
+    undatedExcluded: observationInterval === undefined && options.since === undefined && options.until === undefined
       ? 0
       : episodic.filter((ep) => validObservationTime(ep.observationTimeMs) === undefined).length,
   };
@@ -1303,15 +1360,7 @@ function main(): void {
   // slice cannot honour refuses every mode — including --ask and a
   // nothing-to-drain dogfood — not just the first write. The ValueFilter
   // keeps its own identical throw as defence in depth.
-  const unknownValues = core.values.filter(
-    (v) => !(IMPLEMENTED_VALUES as readonly string[]).includes(v),
-  );
-  if (unknownValues.length > 0) {
-    throw new Error(
-      `${corePath}: cannot interpret core value(s): ${unknownValues.join(", ")} ` +
-        `(implemented: ${IMPLEMENTED_VALUES.join(", ")})`,
-    );
-  }
+  assertSupportedCore(core, corePath);
   const coreLine = core.values.length > 0
     ? `core: ${corePath} (values: ${core.values.join(", ")})`
     : `core: ${corePath} (empty — no constitution, every salient commit passes)`;
@@ -1469,7 +1518,7 @@ function main(): void {
           `      phrase "${text}": ` +
             (how === "adjacent"
               ? "adjacent in the note id, title, or a heading"
-              : "all words present in stored keywords (adjacency unknown — body prose is not stored)"),
+              : "all words present in stored content (no adjacency match in the note id, title, or headings)"),
         );
       }
       if (h.observationTimeMs !== undefined) {
@@ -1477,8 +1526,14 @@ function main(): void {
         const label = channel === "file" ? "observed (file mtime)" : "observed (adapter clock)";
         console.log(`      ${label}: ${new Date(h.observationTimeMs).toISOString()}`);
       }
+      if (h.excerpt !== undefined) {
+        console.log("      source excerpt:");
+        // Display controls never execute; the saved excerpt remains exact.
+        const excerpt = h.excerpt.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+        for (const line of excerpt.split("\n")) console.log(`      > ${line}`);
+      }
       for (const t of h.triples.filter(
-        (t) => t.p !== "mentions" && t.p !== "observation-time-ms",
+        (t) => t.p !== "mentions" && t.p !== "observation-time-ms" && t.p !== "excerpt",
       )) {
         console.log(`      (${t.s}, ${t.p}, ${t.o})`);
       }
