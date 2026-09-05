@@ -16,6 +16,7 @@
     "ask": "bun src/tray.ts --ask",
     "status": "bun src/tray.ts --status",
     "journal": "bun src/tray.ts --journal",
+    "hook-snippet": "bun src/tray.ts --hook-snippet",
     "listen": "bun src/listen.ts",
     "judge": "bun src/judge.ts"
   },

@@ -108,7 +108,11 @@ re-draining afterwards changes nothing.
 
 The adapter is `adapters/claude-code/hook.mjs` — dependency-free Node.
 Add both events to `~/.claude/settings.json`, with the absolute path to
-your clone:
+your clone. `bun run hook-snippet` prints exactly this block with your
+clone's path filled in (it prints only; it never edits `~/.claude`) —
+worth using, because a hook with a wrong path exits 0 like every other
+failure and captures nothing, silently. `bun run status` the next
+morning confirms packets arrived.
 
 ```json
 {

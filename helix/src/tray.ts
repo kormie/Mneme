@@ -1126,6 +1126,13 @@ function runDogfood(
   return 0;
 }
 
+/** The hook block for ~/.claude/settings.json, with this clone's path. */
+export function hookSnippetJson(): string {
+  const command = `node ${join(HELIX_ROOT, "adapters", "claude-code", "hook.mjs")}`;
+  const entry = { hooks: [{ type: "command", command }] };
+  return JSON.stringify({ hooks: { UserPromptSubmit: [entry], Stop: [entry] } }, null, 2);
+}
+
 function main(): void {
   // Developers pipe CLI output through head/grep; a closed pipe is not an
   // error worth a stack trace.
@@ -1148,12 +1155,15 @@ function main(): void {
   let limit: number | null = null;
   let dogfood = false;
   let status = false;
+  let hookSnippet = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i] as string;
     if (flag === "--dogfood") {
       dogfood = true;
     } else if (flag === "--status") {
       status = true;
+    } else if (flag === "--hook-snippet") {
+      hookSnippet = true;
     } else if (
       flag === "--inbox" || flag === "--buffer" || flag === "--spool" || flag === "--out" ||
       flag === "--store" || flag === "--ask" || flag === "--journal" || flag === "--core" ||
@@ -1213,10 +1223,20 @@ function main(): void {
   const modes = [
     dogfood ? "--dogfood" : null,
     status ? "--status" : null,
+    hookSnippet ? "--hook-snippet" : null,
     ask !== null ? "--ask" : null,
     journal !== null ? "--journal" : null,
   ].filter((m): m is string => m !== null);
   if (modes.length > 1) throw new Error(`choose one mode per run: ${modes.join(" or ")}`);
+
+  if (hookSnippet) {
+    // The settings.json block from ADAPTER.md with this clone's absolute
+    // hook path substituted. Printed, never written: the hook exits 0 on
+    // every failure by design, so a wrong path captures nothing forever
+    // with no signal — this removes the copy-and-edit step that causes it.
+    console.log(hookSnippetJson());
+    return;
+  }
   const reading = ask !== null || journal !== null;
   if (limit !== null && !reading) throw new Error("--limit is only valid with --ask or --journal");
 

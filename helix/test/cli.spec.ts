@@ -17,7 +17,7 @@ import { loadKernel } from "../src/kernel.js";
 import type { Observation } from "../src/observation.js";
 import { scanSpool } from "../src/sources.js";
 import { trayStatus } from "../src/status.js";
-import { drainPackets } from "../src/tray.js";
+import { drainPackets, hookSnippetJson } from "../src/tray.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HELIX_ROOT = resolve(HERE, "..");
@@ -176,6 +176,30 @@ describe("flag order", () => {
     await expect(run("bun", [TRAY, "--ask", "--as-of", "2026-09-05", "yesterday",
       "--store", join(dir, "store.json"), "--core", join(dir, "no-core.json")]))
       .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("missing value for --ask") });
+  });
+});
+
+describe("--hook-snippet", () => {
+  it("prints the settings.json block with this clone's absolute hook path, and writes nothing", async () => {
+    const dir = tmp("snippet");
+    const { stdout, stderr } = await run("bun", [TRAY, "--hook-snippet", "--core", join(dir, "no-core.json")]);
+    expect(stderr).toBe("");
+    const parsed = JSON.parse(stdout) as {
+      hooks: Record<string, { hooks: { type: string; command: string }[] }[]>;
+    };
+    expect(Object.keys(parsed.hooks).sort()).toEqual(["Stop", "UserPromptSubmit"]);
+    for (const event of ["UserPromptSubmit", "Stop"]) {
+      const cmd = parsed.hooks[event]?.[0]?.hooks[0];
+      expect(cmd?.type).toBe("command");
+      expect(cmd?.command.startsWith("node ")).toBe(true);
+      const hookPath = cmd?.command.slice("node ".length) as string;
+      expect(hookPath).toBe(join(HELIX_ROOT, "adapters", "claude-code", "hook.mjs"));
+      expect(existsSync(hookPath)).toBe(true);
+    }
+    expect(stdout).not.toContain("MNEME_SOCK"); // never environment-dependent
+    expect(stdout).toBe(hookSnippetJson() + "\n");
+    await expect(run("bun", [TRAY, "--hook-snippet", "--ask", "x", "--core", join(dir, "no-core.json")]))
+      .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("choose one mode") });
   });
 });
 
