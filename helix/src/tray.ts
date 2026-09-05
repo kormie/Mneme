@@ -63,6 +63,24 @@ export interface Hit {
   score: number;
   matched: string[];
   triples: Triple[];
+  excerpt?: string;
+  observedAt?: number;
+  channel?: string;
+}
+
+export interface AskOptions {
+  /** Inclusive observation times, in milliseconds since the Unix epoch. */
+  since?: number;
+  until?: number;
+  limit?: number;
+  /** Most recent first; an empty question lists remembered observations. */
+  recent?: boolean;
+}
+
+interface RetrieveQuery extends AskOptions {
+  tokens: string[];
+  phrases: string[][];
+  indexes: string[];
 }
 
 /** Accent-folded (NFKD, marks stripped) so "réunion" matches "reunion". */
@@ -71,7 +89,11 @@ function fold(text: string): string {
 }
 
 function tokens(text: string): string[] {
-  return [...new Set(fold(text).split(/[^\p{L}\p{N}]+/u).filter((t) => t.length >= 3))];
+  return [...new Set(words(text).filter((t) => t.length >= 2))];
+}
+
+function words(text: string): string[] {
+  return fold(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 }
 
 /** Question words carry no signal; drop them from queries, not haystacks. */
@@ -80,21 +102,40 @@ const STOPWORDS = new Set([
   "do", "the", "and", "for", "with", "about", "was", "were", "are", "you",
   "your", "have", "has", "had", "this", "that", "note", "notes", "write",
   "wrote", "written", "say", "said", "last", "week",
+  "is", "to", "on", "in", "of", "it", "as", "at", "be", "by", "or", "an",
+  "we", "my", "me", "us", "up", "if", "so",
 ]);
 
 function queryTokens(text: string): string[] {
   return tokens(text).filter((t) => !STOPWORDS.has(t));
 }
 
+/** Quoted phrases retain short words and stopwords, and match one field. */
+function queryPhrases(text: string): string[][] {
+  return [...text.matchAll(/["“]([^"”]+)["”]/gu)]
+    .map((match) => words(match[1]!))
+    .filter((phrase) => phrase.length > 0);
+}
+
+function containsPhrase(field: string[], phrase: string[]): boolean {
+  return field.some((_, start) =>
+    phrase.every((word, offset) => field[start + offset] === word),
+  );
+}
+
+function observedTime(t: number): number | undefined {
+  return Number.isFinite(t) && Math.abs(t) <= 8.64e15 ? t : undefined;
+}
+
 /**
  * The most frequent body words (folded, stopwords out, capped so a huge
  * note cannot flood the store). These become "mentions" triples — a bag
- * of words, deliberately not the prose itself.
+ * of words. A separate bounded excerpt preserves the original wording.
  */
 function bodyKeywords(text: string, cap = 64): string[] {
   const counts = new Map<string, number>();
   for (const t of fold(text).split(/[^\p{L}\p{N}]+/u)) {
-    if (t.length < 3 || STOPWORDS.has(t)) continue;
+    if (t.length < 2 || STOPWORDS.has(t)) continue;
     counts.set(t, (counts.get(t) ?? 0) + 1);
   }
   return [...counts.entries()]
@@ -119,9 +160,9 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): App
     // --- pg-w2l write path: slots → LTM commits -----------------------
     "pg-w2l/episode": (inputs) => {
       const trace = inputs.trace as { slots: { obs: SensedObs }[] };
-      // Working episodes carry the note text for semantic extraction;
-      // the persisted Episode never does (conflict rebuilds it from
-      // triples, so only tokens reach the store).
+      // Working episodes carry source text for extraction. The bounded
+      // excerpt and observation time reach persistence through triples
+      // on semantic -> conflict, just like title and headings.
       const episodes = trace.slots.map(({ obs }) => ({
         id: `ep:${obs.id}`,
         note: obs.id,
@@ -129,6 +170,8 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): App
         headings: obs.headings,
         channel: obs.channel,
         text: obs.text,
+        excerpt: obs.text.slice(0, 1200),
+        ...(observedTime(obs.t) === undefined ? {} : { observedAt: obs.t }),
       }));
       return { episodes };
     },
@@ -138,12 +181,14 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): App
       decision: "keep",
     }),
     // Offline stand-in: syntactic triples — title, headings, and a
-    // capped bag of body keywords so ordinary prose is searchable.
+    // capped bag of body keywords plus an exact source excerpt.
     "pg-w2l/semantic": (inputs) => {
       const kept = inputs.kept as (Episode & { text?: string })[];
       const triples: Triple[] = kept.flatMap((ep) => [
         { s: ep.note, p: "titled", o: ep.title },
         { s: ep.note, p: "channel", o: ep.channel ?? "file" },
+        ...(ep.excerpt === undefined ? [] : [{ s: ep.note, p: "excerpt", o: ep.excerpt }]),
+        ...(ep.observedAt === undefined ? [] : [{ s: ep.note, p: "observedAt", o: String(ep.observedAt) }]),
         ...ep.headings.map((h) => ({ s: ep.note, p: "heading", o: h })),
         ...bodyKeywords(ep.text ?? "").map((o) => ({ s: ep.note, p: "mentions", o })),
       ]);
@@ -163,12 +208,17 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): App
       for (const t of triples) byNote.set(t.s, [...(byNote.get(t.s) ?? []), t]);
       const items: WriteItem[] = [...byNote.keys()].sort().flatMap((note): WriteItem[] => {
         const ts = byNote.get(note)!;
+        const excerpt = ts.find((t) => t.p === "excerpt")?.o;
+        const timeText = ts.find((t) => t.p === "observedAt")?.o;
+        const observedAt = timeText === undefined ? undefined : observedTime(Number(timeText));
         const episode: Episode = {
           id: `ep:${note}`,
           note,
           title: ts.find((t) => t.p === "titled")?.o ?? note,
           headings: ts.filter((t) => t.p === "heading").map((t) => t.o),
           channel: ts.find((t) => t.p === "channel")?.o ?? "file",
+          ...(excerpt === undefined ? {} : { excerpt }),
+          ...(observedAt === undefined ? {} : { observedAt }),
         };
         return [
           { store: "episodic", key: episode.id, value: episode },
@@ -197,27 +247,76 @@ function trayAppliers(kernel: KernelIR, emitter: Emitter, store: TrayStore): App
 
     // --- pg-w2l read path: question → hits over the local store ------
     "pg-w2l/query": (inputs) => {
-      const slots = inputs.slots as { text: string }[];
-      return { query: { tokens: queryTokens(slots.map((s) => s.text).join(" ")), indexes: ["episodic", "semantic"] } };
+      const slots = inputs.slots as { text: string; options?: AskOptions }[];
+      const text = slots.map((s) => s.text).join(" ");
+      const query: RetrieveQuery = {
+        ...slots[0]?.options,
+        tokens: queryTokens(text),
+        phrases: queryPhrases(text),
+        indexes: ["episodic", "semantic"],
+      };
+      return { query };
     },
     "pg-w2l/hybrid": (inputs, ctx) => {
-      const query = inputs.query as { tokens: string[] };
+      const query = inputs.query as RetrieveQuery;
       const episodic = inputs.episodic as Episode[];
       const semantic = inputs.semantic as Triple[];
       ctx.emit({ type: "store.read", store: "episodic", keys: episodic.map((e) => e.id) });
       ctx.emit({ type: "store.read", store: "semantic", keys: [...new Set(semantic.map((t) => t.s))] });
+      const byNote = new Map<string, Triple[]>();
+      for (const triple of semantic) {
+        const bucket = byNote.get(triple.s) ?? [];
+        bucket.push(triple);
+        byNote.set(triple.s, bucket);
+      }
+      const hasQuery = query.tokens.length > 0 || query.phrases.length > 0;
       const hits: Hit[] = episodic
-        .map((ep) => {
-          const ts = semantic.filter((t) => t.s === ep.note);
-          const haystack = tokens(
-            [ep.note, ep.title, ...ep.headings, ...ts.map((t) => t.o)].join(" "),
-          );
-          const matched = query.tokens.filter((q) => haystack.includes(q));
-          return { note: ep.note, title: ep.title, score: matched.length, matched, triples: ts };
+        .filter((ep) => {
+          if (query.since !== undefined && (ep.observedAt === undefined || ep.observedAt < query.since)) return false;
+          if (query.until !== undefined && (ep.observedAt === undefined || ep.observedAt > query.until)) return false;
+          return true;
         })
-        .filter((h) => h.score > 0)
-        .sort((a, b) => b.score - a.score || (a.note < b.note ? -1 : 1));
-      return { hits };
+        .flatMap((ep): Hit[] => {
+          const ts = byNote.get(ep.note) ?? [];
+          const fields = [ep.title, ...ep.headings, ep.excerpt ?? ""].map(words);
+          if (!query.phrases.every((phrase) => fields.some((field) => containsPhrase(field, phrase)))) return [];
+          const haystack = new Set(tokens(
+            [ep.note, ep.title, ...ep.headings, ep.excerpt ?? "",
+              ...ts.filter((t) => t.p !== "observedAt").map((t) => t.o)].join(" "),
+          ));
+          const matchedTerms = query.tokens.filter((q) => haystack.has(q));
+          if (hasQuery && matchedTerms.length === 0 && query.phrases.length === 0) return [];
+          if (!hasQuery && !query.recent) return [];
+          const title = new Set(tokens(ep.title));
+          const headings = new Set(tokens(ep.headings.join(" ")));
+          // Term coverage dominates. Title and heading evidence break
+          // ties without letting one repeated word outweigh more terms.
+          const prominence = matchedTerms.reduce((score, term) =>
+            score + (title.has(term) ? 2 : headings.has(term) ? 1 : 0), 0);
+          const score = matchedTerms.length * 100 + query.phrases.length * 100 +
+            Math.round(50 * prominence / Math.max(1, query.tokens.length * 2));
+          return [{
+            note: ep.note,
+            title: ep.title,
+            score,
+            matched: [...matchedTerms, ...query.phrases.map((phrase) => `"${phrase.join(" ")}"`)],
+            triples: ts,
+            channel: ep.channel ?? "file",
+            ...(ep.excerpt === undefined ? {} : { excerpt: ep.excerpt }),
+            ...(ep.observedAt === undefined ? {} : { observedAt: ep.observedAt }),
+          }];
+        })
+        .sort((a, b) => {
+          if (query.recent) {
+            if (a.observedAt === undefined && b.observedAt !== undefined) return 1;
+            if (b.observedAt === undefined && a.observedAt !== undefined) return -1;
+            if (a.observedAt !== undefined && b.observedAt !== undefined && a.observedAt !== b.observedAt) {
+              return b.observedAt - a.observedAt;
+            }
+          }
+          return b.score - a.score || (a.note < b.note ? -1 : a.note > b.note ? 1 : 0);
+        });
+      return { hits: query.limit === undefined ? hits : hits.slice(0, query.limit) };
     },
     // Offline stand-in: hybrid's order is already deterministic; a real
     // rerank is a Core-constrained prompt.
@@ -558,7 +657,19 @@ export function runAsk(
   question: string,
   storeFile: string,
   kernel: KernelIR = loadKernel(),
+  options: AskOptions = {},
 ): AskReport {
+  for (const key of ["since", "until"] as const) {
+    if (options[key] !== undefined && !Number.isFinite(options[key])) {
+      throw new Error(`${key} must be a finite observation timestamp`);
+    }
+  }
+  if (options.since !== undefined && options.until !== undefined && options.since > options.until) {
+    throw new Error("since must be at or before until");
+  }
+  if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1)) {
+    throw new Error("limit must be a positive integer");
+  }
   const store = loadStore(storeFile);
   const episodic = Object.keys(store.episodic).sort().map((k) => store.episodic[k]!);
   const semantic = Object.keys(store.semantic).sort().flatMap((k) => store.semantic[k]!);
@@ -569,7 +680,7 @@ export function runAsk(
     kernel,
     "pg-w2l",
     {
-      slots: [{ id: "slot:ask", text: question }],
+      slots: [{ id: "slot:ask", text: question, options }],
       identity: { values: [], goals: [], style: {} },
       episodic,
       semantic,
@@ -810,7 +921,12 @@ function main(): void {
     }
     for (const h of report.hits.slice(0, 5)) {
       console.log(`  ${h.note} — "${h.title}" (score ${h.score}; matched ${h.matched.join(", ")})`);
-      for (const t of h.triples.filter((t) => t.p !== "mentions")) {
+      console.log(`      source: ${h.channel ?? "file"}` +
+        (h.observedAt === undefined ? "" : ` · ${new Date(h.observedAt).toISOString()}`));
+      if (h.excerpt !== undefined) {
+        for (const line of h.excerpt.split("\n")) console.log(`      > ${line}`);
+      }
+      for (const t of h.triples.filter((t) => !["mentions", "excerpt", "observedAt"].includes(t.p))) {
         console.log(`      (${t.s}, ${t.p}, ${t.o})`);
       }
       const kw = h.triples.filter((t) => t.p === "mentions").length;

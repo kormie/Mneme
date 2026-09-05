@@ -153,8 +153,12 @@ and its trace (`helix/traces/ask.json`) contains no `store.write` and
 needs no permit. A note is remembered by its filename, title (the first
 heading, or the first line when a note has none), headings, and a capped
 bag of its body keywords — accent-folded, so "reunion" finds "réunion".
-The store holds those tokens, never the prose itself. `--store` points
-both modes at a different memory file if you want separate trays.
+The store holds those tokens, an exact excerpt of up to 1,200 characters,
+and the observation timestamp. Older entries without the new optional
+fields remain readable; re-ingesting their source supplies the excerpt
+and time. `--store` points both modes at a different memory file if you
+want separate trays. The [daily CLI](DAILY.md) exposes saved excerpts,
+date filters, and recent-memory review.
 
 ## Roadmap and known debt
 
@@ -184,9 +188,10 @@ refuses the Graft shape outright):
 
 Next, in rank order:
 
-6. **Better retrieval.** Body keywords are indexed now; still open:
-   multi-note synthesis, phrase queries, and a date-aware "what happened
-   last week" — all deterministic, all within the declared graph.
+6. **Better retrieval.** Body keywords, saved excerpts, and observation
+   dates are available through the [daily CLI](DAILY.md), including
+   phrase queries, date-filtered searches, and recent-memory review.
+   Multi-note synthesis remains open.
 7. **Steward-gated proposals only.** Richer structural edges live in the
    frozen `structural` transform, and this whole domain belongs to the
    `agora` twin eventually — both go to Kormie as graph diffs, not code.
