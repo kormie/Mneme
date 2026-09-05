@@ -83,9 +83,31 @@ export interface Hit {
   note: string;
   title: string;
   score: number;
+  /** The query tokens this note matched (exactly or by prefix). */
   matched: string[];
+  /** For each matched query token, the stored token it matched — the
+   * same word for an exact hit, a longer one for a prefix hit
+   * ("deploy" → "deployment"). Display only. */
+  via?: Record<string, string>;
   triples: Triple[];
   observationTimeMs?: number;
+}
+
+/** A word in the note's name, title, or a heading counts double; a word
+ * from the body keyword bag counts once. Named so the digest can say so. */
+const STRONG_WEIGHT = 2;
+const WEAK_WEIGHT = 1;
+/** A query token at least this long also matches stored tokens it
+ * prefixes ("deploy" finds "deployment"); shorter ones match exactly. */
+const PREFIX_MIN = 4;
+
+/** Triple predicates that describe provenance, not content. They never
+ * enter the lexical haystack: "claude", "code", "user", "prompt" and
+ * "file" must not match every entry of a channel. */
+const METADATA_PREDICATES = new Set(["channel", "kind", "observation-time-ms"]);
+
+function tokenMatches(query: string, stored: string): boolean {
+  return stored === query || (query.length >= PREFIX_MIN && stored.startsWith(query));
 }
 
 /** Accent-folded (NFKD, marks stripped) so "réunion" matches "reunion". */
@@ -97,7 +119,10 @@ function tokens(text: string): string[] {
   return [...new Set(fold(text).split(/[^\p{L}\p{N}]+/u).filter((t) => t.length >= 3))];
 }
 
-/** Question words carry no signal; drop them from queries, not haystacks. */
+/** Question words carry no signal; drop them from queries, not haystacks.
+ * Shared with bodyKeywords, so this list changes what the store keeps —
+ * grow QUERY_ONLY_STOPWORDS instead for words that are only noise in a
+ * question. */
 const STOPWORDS = new Set([
   "what", "when", "where", "which", "who", "whom", "why", "how", "did", "does",
   "do", "the", "and", "for", "with", "about", "was", "were", "are", "you",
@@ -105,8 +130,13 @@ const STOPWORDS = new Set([
   "wrote", "written", "say", "said", "happened", "last", "week",
 ]);
 
+/** Words that are noise in a question but may be content in a note
+ * ("ask" in a note about asking). Never applied to bodyKeywords, so
+ * stored triples are unaffected. */
+const QUERY_ONLY_STOPWORDS = new Set(["ask", "asked", "asking", "tell", "told", "show", "find", "remember"]);
+
 function queryTokens(text: string): string[] {
-  return tokens(text).filter((t) => !STOPWORDS.has(t));
+  return tokens(text).filter((t) => !STOPWORDS.has(t) && !QUERY_ONLY_STOPWORDS.has(t));
 }
 
 /** Store files are user-visible JSON and legacy/malformed fields must not
@@ -323,19 +353,36 @@ export function trayAppliers(
       const semantic = inputs.semantic as Triple[];
       ctx.emit({ type: "store.read", store: "episodic", keys: episodic.map((e) => e.id) });
       ctx.emit({ type: "store.read", store: "semantic", keys: [...new Set(semantic.map((t) => t.s))] });
+      // Deterministic lexical scoring in the declared hybrid transform.
+      // Two haystacks per note: the strong one is what the human wrote as
+      // a name or summary (note id, title, headings); the weak one is the
+      // stored body keyword bag. Provenance triples never take part.
       const hits: Hit[] = episodic
         .map((ep) => {
           const ts = semantic.filter((t) => t.s === ep.note);
-          const haystack = tokens(
-            [ep.note, ep.title, ...ep.headings, ...ts.map((t) => t.o)].join(" "),
+          const strong = tokens([ep.note, ep.title, ...ep.headings].join(" "));
+          const weak = tokens(
+            ts.filter((t) => !METADATA_PREDICATES.has(t.p)).map((t) => t.o).join(" "),
           );
-          const matched = query.tokens.filter((q) => haystack.includes(q));
+          let score = 0;
+          const matched: string[] = [];
+          const via: Record<string, string> = {};
+          for (const q of query.tokens) {
+            const strongHit = strong.find((sTok) => tokenMatches(q, sTok));
+            const weakHit = strongHit === undefined ? weak.find((wTok) => tokenMatches(q, wTok)) : undefined;
+            const hit = strongHit ?? weakHit;
+            if (hit === undefined) continue;
+            score += strongHit !== undefined ? STRONG_WEIGHT : WEAK_WEIGHT;
+            matched.push(q);
+            via[q] = hit;
+          }
           const observationTimeMs = validObservationTime(ep.observationTimeMs);
           return {
             note: ep.note,
             title: ep.title,
-            score: matched.length,
+            score,
             matched,
+            ...(matched.length === 0 ? {} : { via }),
             triples: ts,
             ...(observationTimeMs === undefined ? {} : { observationTimeMs }),
           };
@@ -348,11 +395,12 @@ export function trayAppliers(
           }
           return query.tokens.length === 0 ? interval !== undefined : h.score > 0;
         })
+        // Score, then newest observation first (undated last), then note
+        // id: the same total order for every ask, so "what did I say
+        // about X" surfaces the latest occurrence.
         .sort((a, b) =>
           b.score - a.score ||
-          (query.temporal.interval === undefined
-            ? 0
-            : (b.observationTimeMs ?? 0) - (a.observationTimeMs ?? 0)) ||
+          (b.observationTimeMs ?? -Infinity) - (a.observationTimeMs ?? -Infinity) ||
           (a.note < b.note ? -1 : a.note > b.note ? 1 : 0)
         );
       return { hits };
@@ -1226,8 +1274,12 @@ function main(): void {
     }
     const shown = limit ?? 5;
     for (const h of report.hits.slice(0, shown)) {
+      const shownMatches = h.matched.map((q) => {
+        const stored = h.via?.[q];
+        return stored === undefined || stored === q ? q : `${q}→${stored}`;
+      });
       const basis = h.matched.length > 0
-        ? `score ${h.score}; matched ${h.matched.join(", ")}`
+        ? `score ${h.score}; matched ${shownMatches.join(", ")}`
         : "observation time in interval";
       console.log(`  ${h.note} — "${clip(h.title)}" (${basis})`);
       if (h.observationTimeMs !== undefined) {
@@ -1240,8 +1292,9 @@ function main(): void {
       )) {
         console.log(`      (${t.s}, ${t.p}, ${t.o})`);
       }
+      const matchedStored = new Set(Object.values(h.via ?? {}));
       for (const t of h.triples.filter(
-        (t) => t.p === "mentions" && h.matched.includes(fold(t.o)),
+        (t) => t.p === "mentions" && matchedStored.has(fold(t.o)),
       )) {
         console.log(`      (${t.s}, ${t.p}, ${t.o})`);
       }

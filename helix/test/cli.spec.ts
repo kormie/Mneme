@@ -138,10 +138,10 @@ describe("--limit and display clipping", () => {
     const args = ["--ask", "deploy", "--store", store, "--core", join(dir, "no-core.json")];
     const one = await run("bun", [TRAY, ...args, "--limit", "1", "--out", join(dir, "one.json")]);
     expect(one.stdout).toContain("… and 3 more note(s) in this result");
-    expect(one.stdout.match(/score 1; matched deploy/g)).toHaveLength(1);
+    expect(one.stdout.match(/score 2; matched deploy/g)).toHaveLength(1); // title word: counts double
     const all = await run("bun", [TRAY, ...args, "--limit", "10", "--out", join(dir, "all.json")]);
     expect(all.stdout).not.toContain("more note(s)");
-    expect(all.stdout.match(/score 1; matched deploy/g)).toHaveLength(4);
+    expect(all.stdout.match(/score 2; matched deploy/g)).toHaveLength(4);
     // The trace is the same whatever the display cap.
     expect(readFileSync(join(dir, "one.json"), "utf8")).toBe(readFileSync(join(dir, "all.json"), "utf8"));
     await expect(run("bun", [TRAY, ...args, "--limit", "0"]))

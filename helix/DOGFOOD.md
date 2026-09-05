@@ -272,9 +272,14 @@ recognised period fails rather than silently returning an unbounded
 result; naming two periods, two loose dates, or an impossible date fails
 too. Pure temporal questions return every dated record in the interval;
 adding topic words also requires the existing accent-folded lexical
-match. Time-bounded results sort by lexical score, then newest
-observation time, then source-note id; ordinary queries sort by score,
-then note id. The wall clock stays in your shell: an alias such as
+match. A word in a note's name, title, or a heading counts double, a
+word from its body keyword bag counts once, a query word of four or more
+letters also matches stored words it begins ("deploy" finds
+"deployment", shown as `deploy→deployment`), and provenance — channel,
+kind, observation time — is never content, so "claude" does not match
+every prompt. Every result sorts by that score, then newest observation
+first (undated records last), then source-note id, so the latest thing
+you said about a topic comes first. The wall clock stays in your shell: an alias such as
 `alias ask-today='bun run tray --as-of "$(date -u +%F)" --ask'` keeps
 the run itself reproducible.
 

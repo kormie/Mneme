@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "bun:test";
 import { emptyCore } from "../src/core.js";
 import { loadKernel } from "../src/kernel.js";
-import { runAsk, runTray } from "../src/tray.js";
-import { loadStore } from "../src/store.js";
+import type { Observation } from "../src/observation.js";
+import { drainPackets, runAsk, runTray } from "../src/tray.js";
+import { loadStore, saveStore } from "../src/store.js";
 import { commitAfterPermit, countType, validTrace, type TraceEvent } from "../src/trace.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -189,6 +190,64 @@ describe("persistence and retrieval", () => {
   it("refuses a non-positive working-memory budget", () => {
     expect(() => runTray(FIXTURES, join(tmp("budget-zero"), "tray.json"), emptyCore(), kernel, 0))
       .toThrow(/positive integer/);
+  });
+});
+
+describe("retrieval ranking", () => {
+  const t0 = Date.parse("2026-09-01T12:00:00Z");
+  function note(id: string, t: number, text: string): Observation {
+    return { id, t, channel: "file", kind: "note", text };
+  }
+
+  it("counts a word in the title or a heading double, and ranks that above recency", () => {
+    const sf = join(tmp("weights"), "tray.json");
+    drainPackets([
+      note("body.md", t0 + 1000, "# Tuesday\n\nWe discussed the canary rollout at length, canary canary."),
+      note("heading.md", t0, "# Release\n\n## Canary\n\n- go/no-go at noon"),
+    ], sf, emptyCore(), kernel);
+    const r = runAsk("canary", sf, emptyCore(), kernel);
+    expect(r.hits.map((h) => [h.note, h.score])).toEqual([["heading.md", 2], ["body.md", 1]]);
+    expect(r.hits[0]?.via).toEqual({ canary: "canary" });
+  });
+
+  it("matches a query word as a prefix of a stored word from four characters up", () => {
+    const sf = join(tmp("prefix"), "tray.json");
+    drainPackets([note("d.md", t0, "# Plan\n\nThe deployment checklist is ready.")], sf, emptyCore(), kernel);
+    const hit = runAsk("deploy", sf, emptyCore(), kernel).hits[0];
+    expect(hit?.note).toBe("d.md");
+    expect(hit?.matched).toEqual(["deploy"]);
+    expect(hit?.via).toEqual({ deploy: "deployment" });
+    expect(runAsk("dep", sf, emptyCore(), kernel).hits).toEqual([]);
+    expect(runAsk("plan", sf, emptyCore(), kernel).hits[0]?.score).toBe(2); // exact, in the title
+  });
+
+  it("breaks score ties by newest observation, undated last, then note id — for every ask", () => {
+    const sf = join(tmp("recency"), "tray.json");
+    drainPackets([
+      note("older.md", t0, "# Flaky test\n\nstill flapping"),
+      note("newer.md", t0 + 60_000, "# Flaky test\n\nfixed the seed"),
+      note("same-a.md", t0 + 120_000, "# Flaky test\n\nnoted"),
+      note("same-b.md", t0 + 120_000, "# Flaky test\n\nnoted"),
+    ], sf, emptyCore(), kernel);
+    const store = loadStore(sf);
+    store.episodic["ep:undated.md"] = { id: "ep:undated.md", note: "undated.md", title: "Flaky test", headings: [] };
+    store.semantic["undated.md"] = [{ s: "undated.md", p: "titled", o: "Flaky test" }];
+    saveStore(sf, store);
+    const r = runAsk("flaky", sf, emptyCore(), kernel);
+    expect(r.hits.map((h) => h.note)).toEqual(["same-a.md", "same-b.md", "newer.md", "older.md", "undated.md"]);
+    expect(runAsk("flaky", sf, emptyCore(), kernel).hits).toEqual(r.hits);
+  });
+
+  it("never matches provenance triples: channel and kind words are not content", () => {
+    const sf = join(tmp("metadata"), "tray.json");
+    drainPackets([
+      { id: "cc-1", t: t0, channel: "claude-code", kind: "user-prompt", text: "Rename the loader." },
+      note("n.md", t0, "# Notes\n\nA prompt about a file."),
+    ], sf, emptyCore(), kernel);
+    expect(runAsk("claude code user", sf, emptyCore(), kernel).hits).toEqual([]);
+    // …but the same words as real content still match.
+    expect(runAsk("prompt", sf, emptyCore(), kernel).hits.map((h) => h.note)).toEqual(["n.md"]);
+    expect(runAsk("what did I ask about the loader", sf, emptyCore(), kernel).hits.map((h) => h.note)).toEqual(["cc-1"]);
   });
 });
 
