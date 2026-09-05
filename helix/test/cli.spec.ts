@@ -128,10 +128,12 @@ describe("--status is a pure inspection", () => {
   it("labels a phrase-only hit by its score, never as an interval hit", async () => {
     const dir = tmp("phrase-only");
     const store = join(dir, "store.json");
-    drainPackets([packet("cc-tw", "user-prompt", 1756000000000, "This week")], store, emptyCore(), kernel);
-    const { stdout } = await run("bun", [TRAY, "--ask", '"this week"', "--store", store,
+    // A phrase made only of stopwords has no content words to match, so
+    // the hit is adjacency alone: "phrase only", never an interval claim.
+    drainPackets([packet("cc-wwt", "user-prompt", 1756000000000, "What was that")], store, emptyCore(), kernel);
+    const { stdout } = await run("bun", [TRAY, "--ask", '"what was that"', "--store", store,
       "--core", join(dir, "no-core.json"), "--out", join(dir, "a.json")]);
-    expect(stdout).toContain('cc-tw — "This week" (score 2; phrase only)');
+    expect(stdout).toContain('cc-wwt — "What was that" (score 2; phrase only)');
     expect(stdout).not.toContain("observation time in interval");
     expect(stdout).not.toContain("tip: --journal");
   });
