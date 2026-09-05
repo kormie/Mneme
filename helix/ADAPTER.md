@@ -60,7 +60,10 @@ packet, and `bun run dogfood` sweeps the spool through the identical
 pg-s2w pass into the same buffer before it drains — so the daily loop
 needs nothing long-running. Run the listener when you want packets
 buffered as they arrive (and `helix/traces/listen.json` written per
-batch) rather than at the next dogfood run.
+batch) rather than at the next dogfood run. Both may sweep the same
+spool at once; delivery is at-least-once, a sweeper that finds a file
+already consumed simply moves on, and memory is keyed by packet id, so
+a packet both saw is buffered once and drained idempotently.
 
 Every batch is one pg-s2w invocation: normalize → salience → anomaly →
 gate → bind, with the same deterministic secrets quarantine as the tray
@@ -189,6 +192,9 @@ assignment is quarantined at the gate.
 hook only *observes*; it does not query memory and inject context back
 into the session. That read path (query → hybrid → rerank → inject,
 under Core) exists in the tray's `--ask`, and wiring it into the hook is
-a separate, steward-gated step. Also out of scope here: twins, DEM, ADL,
-desktop or Codex adapters, service units, and any rewrite of the
+a separate, steward-gated step — written up, with the other things the
+daily loop wants and this slice must not build alone (a packet `origin`
+naming the repository a prompt came from, a git commit-message channel),
+in [PROPOSALS.md](PROPOSALS.md). Also out of scope here: twins, DEM,
+ADL, desktop or Codex adapters, service units, and any rewrite of the
 TypeScript runtime — the behaviour above is the whole loop.

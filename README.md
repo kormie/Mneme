@@ -41,6 +41,41 @@ markdown notes; it runs the kernel graphs over them and emits a
 `mneme.trace/v1` you can read. Setup, scope fences, and the three feedback
 prompts live in [helix/DOGFOOD.md](helix/DOGFOOD.md).
 
+### Daily use, in five minutes
+
+Everything below is local: no network, no model, and nothing becomes
+memory except by a command you run.
+
+```sh
+cd helix && bun install
+
+# once: let Claude Code's hook observe your prompts. Prints the block
+# for ~/.claude/settings.json with this clone's path; paste it in.
+bun run hook-snippet
+
+# work in Claude Code as usual; the hook spools each prompt. Drop any
+# markdown notes you write into ~/mneme-tray. Then, whenever you like:
+bun run status                                   # is anything waiting?
+bun run dogfood                                  # sweep, drain, judge
+
+# read memory the way you would a journal (the clock stays in your
+# shell; the run itself is reproducible):
+bun run journal "yesterday" --as-of "$(date -u +%F)" --utc-offset -04:00
+bun run journal "this week" --as-of "$(date -u +%F)"
+bun run ask "canary rollout"                     # newest first
+bun run ask '"code review" last week' --as-of "$(date -u +%F)"
+```
+
+`dogfood` sweeps the hook's spool through the sensory graph into the
+buffer, drains buffer and inbox together through the write path (one
+`core.permit` per `store.write`), writes one trace, and judges it. No
+daemon is needed. What memory keeps is names, titles, headings, and a
+capped keyword bag per note — plus, for a heading-less prompt, its
+first line clipped at 120 characters — and your Core file
+(`~/.mneme/core.json`) decides what may be written at all. The things
+the loop still wants and this slice must not build alone are written
+up for the steward in [helix/PROPOSALS.md](helix/PROPOSALS.md).
+
 ## Why the name
 
 *Mneme* (Greek Μνήμη, *mnēmē*) means memory or remembrance. It is the root

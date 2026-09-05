@@ -360,12 +360,29 @@ refuses the Graft shape outright):
    runs the declared graphs in rounds of 64 until the backlog is
    perceived, pg-audit once at the end.
 
+10. ✅ **Reading memory like a person would.** `bun run journal` renders
+    a period as days; a word in a name, title, or heading counts double,
+    query words match stored words they begin, quoted phrases require
+    every word and say whether they were adjacent, provenance never
+    matches as content, and every result lists the newest first.
+    `bun run status` says what is waiting and what memory holds without
+    running anything; `bun run hook-snippet` prints the one block the
+    hook install needs; the digest counts unchanged re-commits on one
+    line; buffer and inbox drain together; a heading-less title is
+    clipped at ingest so the store keeps a handle, not a prompt.
+
 Next, in rank order:
 
-10. **Better retrieval.** Multi-note synthesis and phrase queries remain.
-11. **Steward-gated proposals only.** Richer structural edges live in the
-   frozen `structural` transform, and this whole domain belongs to the
-   `agora` twin eventually — both go to Kormie as graph diffs, not code.
+11. **Steward decisions, written up.** [PROPOSALS.md](PROPOSALS.md)
+    holds the daily-loop asks this slice must not build alone —
+    retrieve-on-submit, a packet `origin` (which repository a prompt
+    came from), a git commit-message channel, buffer rotation, the
+    title-clip policy, and where real multi-note synthesis belongs —
+    each as the smallest diff against the IR or the adapter contract,
+    ending "requires Kormie".
+12. **Steward-gated proposals only.** Richer structural edges live in the
+    frozen `structural` transform, and this whole domain belongs to the
+    `agora` twin eventually — both go to Kormie as graph diffs, not code.
 
 Known Helix debt (acknowledged, not hidden): a cyclic edge re-arms only
 its direct target, so a rerun of `rehearse` would not yet re-run the

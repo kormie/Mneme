@@ -60,8 +60,10 @@ one permit-gated write path `bun run dogfood` runs.
    `helix/traces/dogfood.json`, and runs the untrusted judge over that
    trace.
 
-4. **Surface the judge summary to the user.** Report, from the command's
-   output:
+4. **Surface the judge summary to the user.** (`bun run status` before
+   the drain says what is waiting; `bun run journal "yesterday" --as-of
+   YYYY-MM-DD` afterwards reads the day back. Both are read-only.)
+   Report, from the command's output:
    - The safety verdict (must pass for exit 0).
    - The two liveness gaps, `HasClusterCut` and `HasArchiveSample` — these
      must stay **fail**; this slice never runs pg-adl or pg-dem, and a pass
