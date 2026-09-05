@@ -16,7 +16,7 @@ export interface Observation {
   /** Unique per packet. Downstream memory is keyed, so a re-delivered id
    * replaces rather than duplicates (delivery is at-least-once). */
   id: string;
-  /** Milliseconds since the Unix epoch, the adapter's own clock. */
+  /** Date-representable milliseconds since the Unix epoch, the adapter's own clock. */
   t: number;
   /** Which adapter saw it. */
   channel: Channel;
@@ -33,6 +33,7 @@ export function isObservation(v: unknown): v is Observation {
   return (
     typeof o.id === "string" && o.id.length > 0 &&
     typeof o.t === "number" && Number.isFinite(o.t) &&
+    Number.isFinite(new Date(o.t).getTime()) &&
     typeof o.channel === "string" &&
     (CHANNELS as readonly string[]).includes(o.channel) &&
     typeof o.kind === "string" && o.kind.length > 0 &&

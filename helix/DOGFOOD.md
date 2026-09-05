@@ -178,6 +178,8 @@ bun run tray --buffer ~/.mneme/buffer.jsonl
 # later, from memory:
 bun run tray --ask "what did I write about Jordan?"
 bun run tray --ask "CI flake"
+bun run tray --ask "what happened last week?" --as-of 2026-09-07
+bun run tray --ask "what did I write about deployment last week?" --as-of 2026-09-07
 ```
 
 Ask mode runs the declared pg-w2l read path (`query → hybrid → rerank →
@@ -189,6 +191,36 @@ heading, or the first line when a note has none), headings, and a capped
 bag of its body keywords — accent-folded, so "reunion" finds "réunion".
 The store holds those tokens, never the prose itself. `--store` points
 both modes at a different memory file if you want separate trays.
+
+Relative dates are explicit deterministic inputs: `last week` requires
+`--as-of YYYY-MM-DD` and means the previous UTC calendar week, Monday
+00:00 inclusive through the next Monday 00:00 exclusive. Thus
+`--as-of 2026-09-07` selects observation times in
+`[2026-08-31T00:00:00Z, 2026-09-07T00:00:00Z)`; so does a Wednesday
+`--as-of 2026-09-09`, because this is never a rolling seven-day window.
+Helix never consults the wall clock for a relative query. Supplying
+`--as-of` without the supported `last week` phrase fails rather than
+silently returning an unbounded result. Pure temporal questions return
+every dated record in the interval; adding topic words also requires the
+existing accent-folded lexical match. Time-bounded results sort by lexical
+score, then newest observation time, then source-note id; ordinary queries
+sort by score, then note id.
+
+The displayed date is **observation time**, not the date of an event in
+the note and not a claimed authorship time. Adapter-buffer packets carry
+the adapter's clock reading; markdown inbox notes use file modification
+time as of the latest drain. Editing or copying a file therefore re-dates
+its keyed record and does not retain the earlier time. Git does not
+preserve mtimes, so shipped fixtures are observed when checked out; tests
+that depend on observation time set it explicitly. Like `kind`, time is
+adapter-attested rather than independently verified and currently rides
+through prompt-owned triples; the sealed sidecar remains deferred to the
+steward's 0.11 pack. Helix does not infer dates from prose. Stores written
+before observation time was persisted remain readable without migration:
+their undated records participate in ordinary lexical retrieval but are
+reported and excluded from time-bounded results. Ask mode never rewrites
+the store, and the spec-bound trace vocabulary does not record `--as-of`
+or the derived interval.
 
 ## Roadmap and known debt
 
@@ -229,12 +261,15 @@ refuses the Graft shape outright):
    the same laws hold, the two liveness gaps still must stay fail, and
    there is still no RuntimeCertificate.
 
+7. ✅ **`last week` retrieval under an explicit `--as-of`.** Observation
+   time now survives both ingest channels and the declared write/read
+   graph. Queries return source notes and stored facts without fabricating
+   a narrative. Other relative periods remain unsupported.
+
 Next, in rank order:
 
-7. **Better retrieval.** Body keywords are indexed now; still open:
-   multi-note synthesis, phrase queries, and a date-aware "what happened
-   last week" — all deterministic, all within the declared graph.
-8. **Steward-gated proposals only.** Richer structural edges live in the
+8. **Better retrieval.** Multi-note synthesis and phrase queries remain.
+9. **Steward-gated proposals only.** Richer structural edges live in the
    frozen `structural` transform, and this whole domain belongs to the
    `agora` twin eventually — both go to Kormie as graph diffs, not code.
 
