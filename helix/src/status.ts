@@ -25,7 +25,12 @@ export interface TrayStatus {
      * refused again on every re-drain. */
     notRemembered: Record<string, number>;
   };
-  inbox: { notes: number };
+  inbox: {
+    notes: number;
+    /** Inbox notes with no episode in the store yet. A remembered note is
+     * re-drained idempotently, so only these are new work. */
+    notRemembered: number;
+  };
   store: {
     episodes: number;
     byChannel: Record<string, number>;
@@ -79,7 +84,10 @@ export function trayStatus(paths: {
       ...(bufferRange === undefined ? {} : { range: bufferRange }),
       notRemembered: histogram(notRemembered.map((p) => p.kind)),
     },
-    inbox: { notes: inbox.length },
+    inbox: {
+      notes: inbox.length,
+      notRemembered: inbox.filter((p: Observation) => !remembered.has(`ep:${p.id}`)).length,
+    },
     store: {
       episodes: episodes.length,
       byChannel: histogram(episodes.map((e) => e.channel ?? "file")),
@@ -121,7 +129,10 @@ export function printStatus(
           : "; session-stop is punctuation)"),
     );
   }
-  console.log(`  inbox ${paths.inboxDir}: ${s.inbox.notes} markdown note(s)`);
+  console.log(
+    `  inbox ${paths.inboxDir}: ${s.inbox.notes} markdown note(s)` +
+      (s.inbox.notes > 0 ? `, ${s.inbox.notRemembered} not yet remembered` : ""),
+  );
   console.log(
     `  memory ${paths.storeFile}: ${s.store.episodes} remembered — by channel ${counts(s.store.byChannel)}; by kind ${counts(s.store.byKind)}` +
       (s.store.range === undefined ? "" : `; observed ${s.store.range.start} to ${s.store.range.end}`) +
@@ -132,8 +143,10 @@ export function printStatus(
   // commit; an un-remembered buffer packet may be one the Core refuses
   // again, so it never turns into a standing "drain now".
   const unremembered = pending.reduce((n, [k, c]) => (k === "session-stop" ? n : n + c), 0);
-  if (s.spool.waiting + s.inbox.notes > 0) {
-    console.log(`  next: bun run dogfood (${s.spool.waiting} spooled + ${s.inbox.notes} inbox note(s) to drain)`);
+  if (s.spool.waiting + s.inbox.notRemembered > 0) {
+    console.log(
+      `  next: bun run dogfood (${s.spool.waiting} spooled + ${s.inbox.notRemembered} new inbox note(s) to drain)`,
+    );
   } else if (unremembered > 0) {
     console.log(
       `  next: nothing new is waiting; a re-drain commits any of the ${unremembered} un-remembered buffer packet(s) the Core admits (denials are refused again)`,

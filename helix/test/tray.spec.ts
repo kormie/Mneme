@@ -6,7 +6,7 @@ import { describe, expect, it } from "bun:test";
 import { emptyCore } from "../src/core.js";
 import { loadKernel } from "../src/kernel.js";
 import type { Observation } from "../src/observation.js";
-import { drainPackets, runAsk, runTray } from "../src/tray.js";
+import { drainPackets, extractPhrases, runAsk, runTray } from "../src/tray.js";
 import { loadStore, saveStore } from "../src/store.js";
 import { commitAfterPermit, countType, validTrace, type TraceEvent } from "../src/trace.js";
 
@@ -263,6 +263,15 @@ describe("retrieval ranking", () => {
     expect(runAsk("flaky", sf, emptyCore(), kernel).hits).toEqual(r.hits);
   });
 
+  it("finds a note by 'week' or 'last' as content: period words are excised, not stopwords", () => {
+    const sf = join(tmp("week"), "tray.json");
+    drainPackets([note("wk.md", t0, "# Week planning\n\nthe last item first")], sf, emptyCore(), kernel);
+    expect(runAsk("week", sf, emptyCore(), kernel).hits[0]?.score).toBe(2);
+    expect(runAsk("last item", sf, emptyCore(), kernel).hits[0]?.matched).toEqual(["last", "item"]);
+    // …while "last week" as a period still never becomes a lexical requirement.
+    expect(runAsk("planning last week", sf, emptyCore(), kernel, "2026-09-07").hits[0]?.matched).toEqual(["planning"]);
+  });
+
   it("never matches provenance triples: channel and kind words are not content", () => {
     const sf = join(tmp("metadata"), "tray.json");
     drainPackets([
@@ -326,6 +335,19 @@ describe("quoted phrases", () => {
     expect(quoted.observationInterval).toBeUndefined();
     expect(quoted.hits.map((h) => h.note)).toEqual(["lw.md"]);
     expect(quoted.hits[0]?.phrases).toEqual({ "last week": "adjacent" });
+  });
+
+  it("means whole words by adjacent: a phrase inside another word is neither adjacent nor a hit", () => {
+    const sf = join(tmp("phrase-words"), "tray.json");
+    drainPackets([
+      { id: "cc-prev", t: t0, channel: "claude-code", kind: "user-prompt", text: "Previews of the new dashboard" },
+      { id: "cc-tw", t: t0, channel: "claude-code", kind: "user-prompt", text: "This week" },
+    ], sf, emptyCore(), kernel);
+    expect(runAsk('"review"', sf, emptyCore(), kernel).hits).toEqual([]);
+    expect(runAsk('"is"', sf, emptyCore(), kernel).hits).toEqual([]);
+    expect(runAsk('"this week"', sf, emptyCore(), kernel).hits[0]?.phrases).toEqual({ "this week": "adjacent" });
+    // An empty quote pair never swallows the next phrase's opening quote.
+    expect(extractPhrases('"" "planning"').phrases.map((p) => p.text)).toEqual(["planning"]);
   });
 
   it("finds a phrase typed exactly as a punctuated title as adjacent", () => {

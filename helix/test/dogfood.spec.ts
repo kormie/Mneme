@@ -144,6 +144,8 @@ describe("--dogfood over a buffer mixing session-stop and user-prompt", () => {
       "--core", join(dir, "no-core.json"), // missing Core file = empty Core
     ]);
     expect(stdout).toContain("safety: PASS");
+    // The digest accounts for the session-stop: observed, never bound.
+    expect(stdout).toContain("observed only (salience 0 — session punctuation, never bound, never memory): 1");
     // The store holds the user prompt, under its own permits, and no
     // trace of the session-stop id in any store.write key.
     const store = loadStore(storeFile);

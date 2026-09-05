@@ -119,7 +119,7 @@ function phraseText(text: string): string {
  * only match adjacently in a name, title, or heading. */
 export function extractPhrases(question: string): { phrases: Phrase[]; rest: string } {
   const phrases: Phrase[] = [];
-  const rest = question.replace(/"([^"]+)"/gu, (_m, span: string) => {
+  const rest = question.replace(/"([^"]*)"/gu, (_m, span: string) => {
     const text = phraseText(span);
     if (text !== "") phrases.push({ text, tokens: queryTokens(span) });
     return " ";
@@ -161,7 +161,7 @@ const STOPWORDS = new Set([
   "what", "when", "where", "which", "who", "whom", "why", "how", "did", "does",
   "do", "the", "and", "for", "with", "about", "was", "were", "are", "you",
   "your", "have", "has", "had", "this", "that", "note", "notes", "write",
-  "wrote", "written", "say", "said", "happened", "last", "week",
+  "wrote", "written", "say", "said", "happened",
 ]);
 
 /** Words that are noise in a question but may be content in a note
@@ -432,7 +432,9 @@ export function trayAppliers(
           let phrasesSatisfied = true;
           const strings = [ep.note, ep.title, ...ep.headings].map(phraseText);
           for (const ph of query.phrases) {
-            const adjacent = strings.some((x) => x.includes(ph.text));
+            // Adjacent means the phrase's words in order, as whole words:
+            // "review" is not inside "previews".
+            const adjacent = strings.some((x) => ` ${x} `.includes(` ${ph.text} `));
             const allWords = ph.tokens.length > 0 && ph.tokens.map(scoreToken).every(Boolean);
             if (adjacent) {
               score += STRONG_WEIGHT;
@@ -656,6 +658,9 @@ export interface TrayReport {
   notes: string[];
   quarantined: AnomalyMatch[];
   deferred: string[];
+  /** Packets the gate scored 0 (session punctuation): observed in L0,
+   * never bound into a slot, never proposed for memory. */
+  observedOnly: string[];
   committed: string[];
   /** `committed` partitioned against what the store held before this
    * drain: first seen, re-written with different content, or re-written
@@ -798,6 +803,7 @@ export function drainPackets(
 
   const quarantined: AnomalyMatch[] = [];
   const deferred: string[] = [];
+  const observedOnly: string[] = [];
   const worked: Episode[] = [];
   const triples: Triple[] = [];
   for (const batch of batches) {
@@ -814,6 +820,15 @@ export function drainPackets(
     deferred.push(...((s2w.get("bind")?.dropped ?? []) as string[]));
     const flag = s2w.get("anomaly")?.flag as AnomalyFlag | null;
     quarantined.push(...(flag?.matches ?? []));
+    // Packets that were neither quarantined, deferred, nor bound: the gate
+    // scored them 0 (session punctuation). Observed in L0, never memory —
+    // reported, so the digest's counts add up.
+    const bound = new Set(slots.map((s) => s.obs.id));
+    const flagged = new Set(flag?.notes ?? []);
+    const dropped = new Set((s2w.get("bind")?.dropped ?? []) as string[]);
+    observedOnly.push(
+      ...batch.map((p) => p.id).filter((id) => !bound.has(id) && !flagged.has(id) && !dropped.has(id)),
+    );
 
     const w2l = runGraph(
       kernel,
@@ -865,6 +880,7 @@ export function drainPackets(
     notes: raw.map((p) => p.id),
     quarantined,
     deferred,
+    observedOnly,
     committed: episodes.map((e) => e.note),
     fresh,
     replaced,
@@ -987,6 +1003,11 @@ function printDrainDigest(
   if (report.deferred.length > 0) {
     console.log(
       `deferred (working-memory budget reached — ingest these separately): ${report.deferred.join(", ")}`,
+    );
+  }
+  if (report.observedOnly.length > 0) {
+    console.log(
+      `observed only (salience 0 — session punctuation, never bound, never memory): ${report.observedOnly.length}`,
     );
   }
   if (report.denied.length > 0) {
@@ -1328,9 +1349,9 @@ function main(): void {
       bufferFile,
       inboxDir: inbox ?? join(homedir(), "mneme-tray"),
       storeFile,
-      // The listener's socket lives beside the buffer unless MNEME_SOCK
-      // says otherwise — the same rule the hook applies.
-      sockPath: resolveSockPath(dirname(bufferFile)),
+      // Where the hook and the listener look for the socket: MNEME_SOCK,
+      // else ~/.mneme/helix.sock — never beside a relocated buffer.
+      sockPath: resolveSockPath(mnemeHome),
     };
     if (statusJson) {
       // For a fleet asking "is the loop alive on this machine": the same
@@ -1425,7 +1446,10 @@ function main(): void {
       console.log("  no memory yet — drop notes in the inbox and run an ingest first");
     } else if (report.hits.length === 0) {
       console.log("  no matches");
-    } else if (report.observationInterval !== undefined && report.hits.every((h) => h.matched.length === 0)) {
+    } else if (
+      report.observationInterval !== undefined &&
+      report.hits.every((h) => h.matched.length === 0 && h.phrases === undefined)
+    ) {
       console.log("  tip: --journal renders a period like this as a day-by-day journal");
     }
     const shown = limit ?? 5;
@@ -1436,7 +1460,9 @@ function main(): void {
       });
       const basis = h.matched.length > 0
         ? `score ${h.score}; matched ${shownMatches.join(", ")}`
-        : "observation time in interval";
+        : h.phrases !== undefined
+          ? `score ${h.score}; phrase only`
+          : "observation time in interval";
       console.log(`  ${h.note} — "${clip(h.title)}" (${basis})`);
       for (const [text, how] of Object.entries(h.phrases ?? {})) {
         console.log(

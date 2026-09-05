@@ -76,9 +76,9 @@ describe("--status is a pure inspection", () => {
     expect(stdout).toContain("observed 2025-08-24T01:46:40.000Z to 2025-08-26T09:20:00.000Z");
     expect(stdout).toContain("buffered, not remembered: session-stop 1, user-prompt 1");
     expect(stdout).toContain("session-stop is punctuation");
-    expect(stdout).toContain("1 markdown note(s)");
+    expect(stdout).toContain("1 markdown note(s), 1 not yet remembered");
     expect(stdout).toContain("1 remembered — by channel claude-code 1; by kind user-prompt 1");
-    expect(stdout).toContain("next: bun run dogfood (1 spooled + 1 inbox note(s) to drain)");
+    expect(stdout).toContain("next: bun run dogfood (1 spooled + 1 new inbox note(s) to drain)");
     expect(stdout).toContain("no graph ran, no trace written");
     expect(stdout).not.toContain(w.sentinel);
     // Nothing consumed, nothing written.
@@ -89,17 +89,51 @@ describe("--status is a pure inspection", () => {
     expect(readdirSync(w.dir).sort()).toEqual(["buffer.jsonl", "inbox", "spool", "store.json"]);
   });
 
-  it("reports the listener socket beside the buffer, or where MNEME_SOCK points", async () => {
+  it("reports the listener socket where the hook and listener look: MNEME_SOCK, never beside the buffer", async () => {
     const w = world();
     const args = ["--status", "--spool", w.spool, "--buffer", w.buffer, "--inbox", w.inbox,
       "--store", w.store, "--core", join(w.dir, "no-core.json")];
-    const absent = await run("bun", [TRAY, ...args]);
-    expect(absent.stdout).toContain(`listener socket ${join(w.dir, "helix.sock")}: absent`);
-    writeFileSync(join(w.dir, "helix.sock"), ""); // a stale or live socket path: present, never probed
-    const present = await run("bun", [TRAY, ...args]);
-    expect(present.stdout).toContain(`listener socket ${join(w.dir, "helix.sock")}: present (not probed)`);
-    const env = await run("bun", [TRAY, ...args], { env: { ...process.env, MNEME_SOCK: join(w.dir, "elsewhere.sock") } });
-    expect(env.stdout).toContain(`listener socket ${join(w.dir, "elsewhere.sock")}: absent`);
+    const sock = join(w.dir, "helix.sock");
+    const env = { ...process.env, MNEME_SOCK: sock };
+    const absent = await run("bun", [TRAY, ...args], { env });
+    expect(absent.stdout).toContain(`listener socket ${sock}: absent`);
+    writeFileSync(sock, ""); // a stale or live socket path: present, never probed
+    const present = await run("bun", [TRAY, ...args], { env });
+    expect(present.stdout).toContain(`listener socket ${sock}: present (not probed)`);
+    // A relocated buffer does not move the socket: it is not looked for beside it.
+    const beside = await run("bun", [TRAY, ...args], { env: { ...process.env, MNEME_SOCK: join(w.dir, "nope.sock") } });
+    expect(beside.stdout).not.toContain(`listener socket ${sock}`);
+  });
+
+  it("stops recommending a drain once the inbox notes are remembered", async () => {
+    const dir = tmp("drained-inbox");
+    const inbox = join(dir, "inbox");
+    mkdirSync(inbox, { recursive: true });
+    writeFileSync(join(inbox, "a.md"), "# A\n\nbody\n");
+    writeFileSync(join(inbox, "b.md"), "# B\n\nbody\n");
+    const common = ["--spool", join(dir, "spool"), "--buffer", join(dir, "buffer.jsonl"), "--inbox", inbox,
+      "--store", join(dir, "store.json"), "--core", join(dir, "no-core.json")];
+    const before = await run("bun", [TRAY, "--status", ...common]);
+    expect(before.stdout).toContain("2 markdown note(s), 2 not yet remembered");
+    expect(before.stdout).toContain("next: bun run dogfood (0 spooled + 2 new inbox note(s) to drain)");
+    await run("bun", [TRAY, "--dogfood", ...common, "--out", join(dir, "t.json")]);
+    const after = await run("bun", [TRAY, "--status", ...common]);
+    expect(after.stdout).toContain("2 markdown note(s), 0 not yet remembered");
+    expect(after.stdout).toContain("next: nothing waiting");
+    writeFileSync(join(inbox, "c.md"), "# C\n\nbody\n");
+    const again = await run("bun", [TRAY, "--status", ...common]);
+    expect(again.stdout).toContain("next: bun run dogfood (0 spooled + 1 new inbox note(s) to drain)");
+  });
+
+  it("labels a phrase-only hit by its score, never as an interval hit", async () => {
+    const dir = tmp("phrase-only");
+    const store = join(dir, "store.json");
+    drainPackets([packet("cc-tw", "user-prompt", 1756000000000, "This week")], store, emptyCore(), kernel);
+    const { stdout } = await run("bun", [TRAY, "--ask", '"this week"', "--store", store,
+      "--core", join(dir, "no-core.json"), "--out", join(dir, "a.json")]);
+    expect(stdout).toContain('cc-tw — "This week" (score 2; phrase only)');
+    expect(stdout).not.toContain("observation time in interval");
+    expect(stdout).not.toContain("tip: --journal");
   });
 
   it("honours MNEME_SPOOL like the hook does, for --status and for the dogfood sweep", async () => {
