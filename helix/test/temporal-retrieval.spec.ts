@@ -7,6 +7,7 @@ import { emptyCore } from "../src/core.js";
 import { loadKernel } from "../src/kernel.js";
 import { type Observation } from "../src/observation.js";
 import { emptyStore, loadStore, saveStore } from "../src/store.js";
+import { temporalQuery } from "../src/temporal-query.js";
 import { drainPackets, runAsk, runTray } from "../src/tray.js";
 import { countType, validTrace } from "../src/trace.js";
 
@@ -39,6 +40,7 @@ describe("date-aware retrieval through persisted pg-w2l", () => {
       endMs: Date.parse("2026-09-07T00:00:00Z"),
       start: "2026-08-31T00:00:00.000Z",
       end: "2026-09-07T00:00:00.000Z",
+      utcOffset: "+00:00",
     });
 
     expect(runAsk("what did I write about canary last week?", storeFile, emptyCore(), kernel, AS_OF)
@@ -140,7 +142,7 @@ describe("date-aware retrieval through persisted pg-w2l", () => {
     }
     expect(runAsk("last week", storeFile, emptyCore(), kernel, AS_OF).hits).toEqual([]);
     expect(() => runAsk("deployment", storeFile, emptyCore(), kernel, AS_OF))
-      .toThrow(/no supported relative period/);
+      .toThrow(/no supported period/);
   });
 
   it("has stable ties, keyed replacement, and byte-identical reports and traces", () => {
@@ -228,3 +230,130 @@ describe("date-aware retrieval through persisted pg-w2l", () => {
     expect(result.stdout).toContain("… and 1 more note(s) in this result");
   });
 });
+
+describe("the wider period surface (calendar units, fixed offsets, absolute days)", () => {
+  const interval = (question: string, asOf?: string, utcOffset?: string) =>
+    temporalQuery(question, asOf, utcOffset).interval;
+
+  it("anchors today, yesterday, this week, this month and last month on --as-of", () => {
+    // 2026-09-05 is a Saturday.
+    expect(interval("today", "2026-09-05")).toMatchObject({
+      label: "today", start: "2026-09-05T00:00:00.000Z", end: "2026-09-06T00:00:00.000Z",
+    });
+    expect(interval("what did I ask yesterday", "2026-09-05")).toMatchObject({
+      label: "yesterday", start: "2026-09-04T00:00:00.000Z", end: "2026-09-05T00:00:00.000Z",
+    });
+    expect(interval("this week", "2026-09-05")).toMatchObject({
+      label: "this week", start: "2026-08-31T00:00:00.000Z", end: "2026-09-07T00:00:00.000Z",
+    });
+    expect(interval("this week", "2026-08-31")).toMatchObject({ // a Monday
+      start: "2026-08-31T00:00:00.000Z", end: "2026-09-07T00:00:00.000Z",
+    });
+    expect(interval("this month", "2026-09-05")).toMatchObject({
+      label: "this month", start: "2026-09-01T00:00:00.000Z", end: "2026-10-01T00:00:00.000Z",
+    });
+    expect(interval("last month", "2026-09-05")).toMatchObject({
+      label: "last month", start: "2026-08-01T00:00:00.000Z", end: "2026-09-01T00:00:00.000Z",
+    });
+    // Month arithmetic across a year boundary and into a leap February.
+    expect(interval("last month", "2026-01-15")).toMatchObject({
+      start: "2025-12-01T00:00:00.000Z", end: "2026-01-01T00:00:00.000Z",
+    });
+    expect(interval("this month", "2028-02-10")).toMatchObject({
+      start: "2028-02-01T00:00:00.000Z", end: "2028-03-01T00:00:00.000Z",
+    });
+    expect(interval("yesterday", "2028-03-01")).toMatchObject({
+      start: "2028-02-29T00:00:00.000Z", end: "2028-03-01T00:00:00.000Z",
+    });
+  });
+
+  it("recognises absolute days and inclusive ranges without --as-of, and excises them from the question", () => {
+    const single = temporalQuery("what did I write on 2026-09-02");
+    expect(single.interval).toMatchObject({
+      label: "on 2026-09-02", start: "2026-09-02T00:00:00.000Z", end: "2026-09-03T00:00:00.000Z",
+    });
+    expect(single.residual).toBe("what did I write");
+    expect(temporalQuery("2026-09-02 canary").interval?.label).toBe("on 2026-09-02");
+    expect(temporalQuery("2026-09-02 canary").residual).toBe("canary");
+    const range = temporalQuery("canary between 2026-09-01 and 2026-09-03");
+    expect(range.interval).toMatchObject({
+      label: "2026-09-01 to 2026-09-03",
+      start: "2026-09-01T00:00:00.000Z", end: "2026-09-04T00:00:00.000Z",
+    });
+    expect(range.residual).toBe("canary");
+    expect(temporalQuery("from 2026-09-01 to 2026-09-03").interval?.label).toBe("2026-09-01 to 2026-09-03");
+    // --as-of alongside an absolute day is unneeded, not an error.
+    expect(interval("on 2026-09-02", AS_OF)?.label).toBe("on 2026-09-02");
+    expect(temporalQuery("canary yesterday", AS_OF).residual).toBe("canary");
+    expect(temporalQuery("what happened last week?", AS_OF).residual).toBe("what happened ?");
+  });
+
+  it("moves day boundaries by an explicit fixed --utc-offset", () => {
+    // Local midnight at UTC-04:00 is 04:00Z; the interval is reported as UTC instants.
+    expect(interval("yesterday", "2026-09-05", "-04:00")).toMatchObject({
+      start: "2026-09-04T04:00:00.000Z", end: "2026-09-05T04:00:00.000Z", utcOffset: "-04:00",
+    });
+    expect(interval("on 2026-09-02", undefined, "+05:30")).toMatchObject({
+      start: "2026-09-01T18:30:00.000Z", end: "2026-09-02T18:30:00.000Z", utcOffset: "+05:30",
+    });
+    expect(interval("this week", "2026-09-05", "-04:00")).toMatchObject({
+      start: "2026-08-31T04:00:00.000Z", end: "2026-09-07T04:00:00.000Z",
+    });
+    for (const bad of ["-4:00", "04:00", "+15:00", "-04:60", "EDT"]) {
+      expect(() => temporalQuery("yesterday", "2026-09-05", bad)).toThrow(/invalid --utc-offset/);
+    }
+    expect(() => temporalQuery("canary", undefined, "-04:00")).toThrow(/--utc-offset was given/);
+  });
+
+  it("refuses ambiguous or under-specified periods", () => {
+    expect(() => temporalQuery("yesterday and last week", "2026-09-05")).toThrow(/one period per question/);
+    expect(() => temporalQuery("2026-09-01 or 2026-09-03")).toThrow(/two dates/);
+    expect(() => temporalQuery("between 2026-09-03 and 2026-09-01")).toThrow(/ends before it starts/);
+    expect(() => temporalQuery("on 2026-02-30")).toThrow(/real UTC calendar date/);
+    for (const label of ["today", "yesterday", "this week", "this month", "last month"]) {
+      expect(() => temporalQuery(label)).toThrow(/requires --as-of/);
+    }
+    // A period word inside another word is not a period.
+    expect(temporalQuery("todays standup").interval).toBeUndefined();
+    expect(temporalQuery("weekly review").interval).toBeUndefined();
+  });
+
+  it("filters the store by the recognised period and never by its words", () => {
+    const storeFile = join(tmp("periods"), "store.json");
+    drainPackets([
+      packet("fri.md", "2026-09-04T22:30:00Z", "# Friday\nCanary shipped"),
+      packet("sat.md", "2026-09-05T01:00:00Z", "# Saturday\nYesterday's canary held"),
+      packet("aug.md", "2026-08-20T12:00:00Z", "# August\nCanary planned"),
+    ], storeFile, emptyCore(), kernel);
+    // In UTC, sat.md was observed on the 5th; at -04:00 it is still Friday evening.
+    expect(runAsk("what happened yesterday", storeFile, emptyCore(), kernel, "2026-09-05")
+      .hits.map((h) => h.note)).toEqual(["fri.md"]);
+    expect(runAsk("what happened yesterday", storeFile, emptyCore(), kernel, "2026-09-05", "-04:00")
+      .hits.map((h) => h.note)).toEqual(["sat.md", "fri.md"]);
+    expect(runAsk("canary last month", storeFile, emptyCore(), kernel, "2026-09-05")
+      .hits.map((h) => h.note)).toEqual(["aug.md"]);
+    expect(runAsk("on 2026-09-04", storeFile, emptyCore(), kernel)
+      .hits.map((h) => h.note)).toEqual(["fri.md"]);
+    expect(runAsk("between 2026-08-01 and 2026-09-04", storeFile, emptyCore(), kernel)
+      .hits.map((h) => h.note)).toEqual(["fri.md", "aug.md"]);
+    // "yesterday" is the period, not a required token — sat.md's title
+    // contains the word, but the interval alone decides.
+    const cli = spawnSync(
+      process.execPath,
+      ["src/tray.ts", "--ask", "yesterday", "--as-of", "2026-09-05", "--utc-offset", "-04:00",
+        "--store", storeFile, "--out", join(tmp("periods-trace"), "ask.json"),
+        "--core", join(tmp("periods-core"), "no-core.json")],
+      { cwd: join(import.meta.dir, ".."), encoding: "utf8" },
+    );
+    expect(result_ok(cli)).toBe(true);
+    expect(cli.stdout).toContain("observation time: [2026-09-04T04:00:00.000Z, 2026-09-05T04:00:00.000Z)");
+    expect(cli.stdout).toContain("day boundaries at UTC-04:00");
+    expect(cli.stdout).toContain("sat.md");
+    expect(cli.stdout).toContain("fri.md");
+  });
+});
+
+function result_ok(r: { status: number | null; stderr: string }): boolean {
+  if (r.status !== 0) console.error(r.stderr);
+  return r.status === 0;
+}

@@ -38,7 +38,7 @@ import { makeEmitter, runGraph, type Appliers, type Emitter } from "./scheduler.
 import { type AnomalyFlag, type AnomalyMatch } from "./anomaly.js";
 import { parseObservation, type Observation } from "./observation.js";
 import { sensoryAppliers, type SensedObs } from "./sensory.js";
-import { temporalQuery, type ObservationInterval } from "./temporal-query.js";
+import { describeInterval, temporalQuery, type ObservationInterval } from "./temporal-query.js";
 import { writeTrace } from "./trace-io.js";
 import {
   loadStore,
@@ -299,12 +299,16 @@ export function trayAppliers(
 
     // --- pg-w2l read path: question → hits over the local store ------
     "pg-w2l/query": (inputs) => {
-      const slots = inputs.slots as { text: string; asOf?: string }[];
+      const slots = inputs.slots as { text: string; asOf?: string; utcOffset?: string }[];
       const text = slots.map((s) => s.text).join(" ");
+      // The period phrase is recognised first and excised, so its own
+      // words ("yesterday", a date literal) never become lexical
+      // requirements on the notes.
+      const temporal = temporalQuery(text, slots[0]?.asOf, slots[0]?.utcOffset);
       return {
         query: {
-          tokens: queryTokens(text),
-          temporal: temporalQuery(text, slots[0]?.asOf),
+          tokens: queryTokens(temporal.residual),
+          temporal,
           indexes: ["episodic", "semantic"],
         },
       };
@@ -770,6 +774,7 @@ export function runAsk(
   core: CoreFile,
   kernel: KernelIR = loadKernel(),
   asOf?: string,
+  utcOffset?: string,
 ): AskReport {
   const store = loadStore(storeFile);
   const episodic = Object.keys(store.episodic).sort().map((k) => store.episodic[k]!);
@@ -781,7 +786,12 @@ export function runAsk(
     kernel,
     "pg-w2l",
     {
-      slots: [{ id: "slot:ask", text: question, ...(asOf === undefined ? {} : { asOf }) }],
+      slots: [{
+        id: "slot:ask",
+        text: question,
+        ...(asOf === undefined ? {} : { asOf }),
+        ...(utcOffset === undefined ? {} : { utcOffset }),
+      }],
       identity: coreSnapshot(core),
       episodic,
       semantic,
@@ -1056,6 +1066,7 @@ function main(): void {
   let ask: string | null = null;
   let coreArg: string | null = null;
   let asOf: string | null = null;
+  let utcOffset: string | null = null;
   let maxSlots: number | null = null;
   let dogfood = false;
   for (let i = 0; i < args.length; i++) {
@@ -1065,7 +1076,7 @@ function main(): void {
     } else if (
       flag === "--inbox" || flag === "--buffer" || flag === "--spool" || flag === "--out" ||
       flag === "--store" || flag === "--ask" || flag === "--core" || flag === "--as-of" ||
-      flag === "--max-slots"
+      flag === "--utc-offset" || flag === "--max-slots"
     ) {
       const value = args[++i];
       if (value === undefined) throw new Error(`missing value for ${flag}`);
@@ -1076,6 +1087,7 @@ function main(): void {
       else if (flag === "--store") storeFile = resolve(value);
       else if (flag === "--core") coreArg = resolve(value);
       else if (flag === "--as-of") asOf = value;
+      else if (flag === "--utc-offset") utcOffset = value;
       else if (flag === "--max-slots") {
         if (!/^[1-9]\d*$/.test(value)) {
           throw new Error(`--max-slots must be a positive integer, got ${JSON.stringify(value)}`);
@@ -1112,6 +1124,7 @@ function main(): void {
   if (dogfood) {
     if (ask !== null) throw new Error("choose one mode per run: --dogfood or --ask");
     if (asOf !== null) throw new Error("--as-of is only valid with --ask");
+    if (utcOffset !== null) throw new Error("--utc-offset is only valid with --ask");
     // With --dogfood, --spool, --buffer and --inbox merely relocate the
     // documented defaults; source preference (buffer first) stays the same.
     const mnemeHome = join(homedir(), ".mneme");
@@ -1136,19 +1149,22 @@ function main(): void {
   if (asOf !== null && ask === null) {
     throw new Error("--as-of is only valid with --ask");
   }
+  if (utcOffset !== null && ask === null) {
+    throw new Error("--utc-offset is only valid with --ask");
+  }
   if (maxSlots !== null && ask !== null) {
     throw new Error("--max-slots is only valid for a drain (--dogfood, --inbox, or --buffer)");
   }
 
   if (ask !== null) {
-    const report = runAsk(ask, storeFile, core, loadKernel(), asOf ?? undefined);
+    const report = runAsk(ask, storeFile, core, loadKernel(), asOf ?? undefined, utcOffset ?? undefined);
     const outFile = out ?? join(HELIX_ROOT, "traces", "ask.json");
     writeTrace(report.trace, outFile);
     console.log(`ask: "${report.question}" over ${report.storeNotes} remembered notes (${storeFile})`);
     if (report.observationInterval !== undefined) {
       console.log(
         `  observation time: [${report.observationInterval.start}, ${report.observationInterval.end}) ` +
-        `(previous UTC calendar week; as-of ${asOf})`,
+        `— ${describeInterval(report.observationInterval, asOf ?? undefined)}`,
       );
       if (report.undatedExcluded > 0) {
         console.log(

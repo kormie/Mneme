@@ -206,6 +206,9 @@ bun run tray --ask "what did I write about Jordan?"
 bun run tray --ask "CI flake"
 bun run tray --ask "what happened last week?" --as-of 2026-09-07
 bun run tray --ask "what did I write about deployment last week?" --as-of 2026-09-07
+bun run tray --ask "what did I ask yesterday" --as-of 2026-09-05 --utc-offset -04:00
+bun run tray --ask "canary on 2026-09-02"
+bun run tray --ask "between 2026-09-01 and 2026-09-03"
 ```
 
 Ask mode runs the declared pg-w2l read path (`query → hybrid → rerank →
@@ -218,19 +221,40 @@ bag of its body keywords — accent-folded, so "reunion" finds "réunion".
 The store holds those tokens, never the prose itself. `--store` points
 both modes at a different memory file if you want separate trays.
 
-Relative dates are explicit deterministic inputs: `last week` requires
-`--as-of YYYY-MM-DD` and means the previous UTC calendar week, Monday
-00:00 inclusive through the next Monday 00:00 exclusive. Thus
+Dates are explicit deterministic inputs; Helix never consults the wall
+clock for a query. A question may name one period:
+
+| Phrase | Needs | Interval (half-open) |
+| --- | --- | --- |
+| `today` | `--as-of D` | `[D, D+1 day)` |
+| `yesterday` | `--as-of D` | `[D−1 day, D)` |
+| `this week` | `--as-of D` | the calendar week holding D, Monday to Monday |
+| `last week` | `--as-of D` | the calendar week before that |
+| `this month` | `--as-of D` | the calendar month holding D |
+| `last month` | `--as-of D` | the calendar month before that |
+| `on YYYY-MM-DD` (or a bare date) | nothing | that day |
+| `between A and B` / `from A to B` | nothing | both days inclusive |
+
+Periods are calendar units, never rolling windows: `last week` with
 `--as-of 2026-09-07` selects observation times in
-`[2026-08-31T00:00:00Z, 2026-09-07T00:00:00Z)`; so does a Wednesday
-`--as-of 2026-09-09`, because this is never a rolling seven-day window.
-Helix never consults the wall clock for a relative query. Supplying
-`--as-of` without the supported `last week` phrase fails rather than
-silently returning an unbounded result. Pure temporal questions return
-every dated record in the interval; adding topic words also requires the
-existing accent-folded lexical match. Time-bounded results sort by lexical
-score, then newest observation time, then source-note id; ordinary queries
-sort by score, then note id.
+`[2026-08-31T00:00:00Z, 2026-09-07T00:00:00Z)`, and so does a Wednesday
+`--as-of 2026-09-09`. Day boundaries fall at midnight UTC unless
+`--utc-offset ±HH:MM` says otherwise — an explicit fixed offset is a
+deterministic input, not a clock read, so `--utc-offset -04:00` makes a
+9 PM prompt in Rhode Island land on the day you typed it; a fixed
+offset ignores daylight saving by design, so pick the offset in force
+for the days you are asking about. The period phrase is recognised and
+removed before the lexical match, so "yesterday" or a date literal never
+becomes a required word. Supplying `--as-of` or `--utc-offset` without a
+recognised period fails rather than silently returning an unbounded
+result; naming two periods, two loose dates, or an impossible date fails
+too. Pure temporal questions return every dated record in the interval;
+adding topic words also requires the existing accent-folded lexical
+match. Time-bounded results sort by lexical score, then newest
+observation time, then source-note id; ordinary queries sort by score,
+then note id. The wall clock stays in your shell: an alias such as
+`alias ask-today='bun run tray --as-of "$(date -u +%F)" --ask'` keeps
+the run itself reproducible.
 
 The displayed date is **observation time**, not the date of an event in
 the note and not a claimed authorship time. Adapter-buffer packets carry
@@ -290,7 +314,9 @@ refuses the Graft shape outright):
 7. ✅ **`last week` retrieval under an explicit `--as-of`.** Observation
    time now survives both ingest channels and the declared write/read
    graph. Queries return source notes and stored facts without fabricating
-   a narrative. Other relative periods remain unsupported.
+   a narrative. Since extended to today, yesterday, this/last week,
+   this/last month, absolute days and inclusive ranges, with an explicit
+   fixed `--utc-offset` for day boundaries.
 8. ✅ **No daemon required.** `bun run dogfood` sweeps the hook's spool
    through pg-s2w into the buffer before draining — the listener's
    `--once` pass, run by the one operator command — so the loop is the
