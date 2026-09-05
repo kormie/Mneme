@@ -258,6 +258,13 @@ matched; `--limit` caps the lines. The journal needs a period; it never
 shows session-stop punctuation, because that is never remembered, and
 it writes the same read-only trace `--ask` does.
 
+Add `--json` to `--ask` or `--journal` when another local tool needs
+structured results instead of prose. This changes presentation only:
+the declared read path, trace bytes, and underlying hit order stay the
+same. `--limit` caps the returned `hits` or `entries`, and `omitted`
+reports how many results remain. Journal entries retain the ascending
+display order described above.
+
 Ask mode runs the declared pg-w2l read path (`query → hybrid → rerank →
 inject`) over your store — deterministic lexical retrieval across note
 names, titles, headings, and extracted triples; no model, no network,

@@ -33,7 +33,7 @@ import {
 } from "./core.js";
 import { clip } from "./display.js";
 import { hookCommand } from "./hook-install.js";
-import { renderJournal } from "./journal.js";
+import { journalLines, renderJournal } from "./journal.js";
 import { judge, type Judgement } from "./judge.js";
 import { loadKernel, type KernelIR } from "./kernel.js";
 import { drainSpool, processBatch } from "./listen.js";
@@ -1305,7 +1305,7 @@ function main(): void {
   let limit: number | null = null;
   let dogfood = false;
   let status = false;
-  let statusJson = false;
+  let json = false;
   let hookSnippet = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i] as string;
@@ -1314,7 +1314,7 @@ function main(): void {
     } else if (flag === "--status") {
       status = true;
     } else if (flag === "--json") {
-      statusJson = true;
+      json = true;
     } else if (flag === "--hook-snippet") {
       hookSnippet = true;
     } else if (
@@ -1385,7 +1385,7 @@ function main(): void {
   const reading = ask !== null || journal !== null;
   if (limit !== null && !reading) throw new Error("--limit is only valid with --ask or --journal");
 
-  if (statusJson && !status) throw new Error("--json is only valid with --status");
+  if (json && !status && !reading) throw new Error("--json is only valid with --status, --ask, or --journal");
   if (status) {
     for (const [given, name] of [[asOf, "--as-of"], [utcOffset, "--utc-offset"], [out, "--out"]] as const) {
       if (given !== null) throw new Error(`${name} is not valid with --status (inspection only)`);
@@ -1402,7 +1402,7 @@ function main(): void {
       // else ~/.mneme/helix.sock — never beside a relocated buffer.
       sockPath: resolveSockPath(mnemeHome),
     };
-    if (statusJson) {
+    if (json) {
       // For a fleet asking "is the loop alive on this machine": the same
       // inspection as data. Counts and dates only, never packet text.
       console.log(JSON.stringify({ core: { file: corePath, values: core.values }, paths, status: trayStatus(paths) }, null, 2));
@@ -1457,6 +1457,18 @@ function main(): void {
     }
     const outFile = out ?? join(HELIX_ROOT, "traces", "ask.json");
     writeTrace(report.trace, outFile);
+    if (json) {
+      const shown = limit ?? report.hits.length;
+      console.log(JSON.stringify({
+        mode: "journal", question: report.question, store: storeFile, storeNotes: report.storeNotes,
+        observationInterval: report.observationInterval, undatedExcluded: report.undatedExcluded,
+        entries: journalLines(report.hits, report.observationInterval).slice(0, shown),
+        omitted: Math.max(0, report.hits.length - shown),
+        trace: { file: outFile, events: report.trace.events.length, readOnly: true }, checks: report.checks,
+      }, null, 2));
+      if (!checksOk(report.checks)) process.exitCode = 1;
+      return;
+    }
     console.log(
       `journal: ${describeInterval(report.observationInterval, asOf ?? undefined)} ` +
         `— observation time [${report.observationInterval.start}, ${report.observationInterval.end}) ` +
@@ -1478,6 +1490,18 @@ function main(): void {
     const report = runAsk(ask, storeFile, core, loadKernel(), asOf ?? undefined, utcOffset ?? undefined);
     const outFile = out ?? join(HELIX_ROOT, "traces", "ask.json");
     writeTrace(report.trace, outFile);
+    if (json) {
+      const shown = limit ?? 5;
+      console.log(JSON.stringify({
+        mode: "ask", question: report.question, store: storeFile, storeNotes: report.storeNotes,
+        ...(report.observationInterval === undefined ? {} : { observationInterval: report.observationInterval }),
+        undatedExcluded: report.undatedExcluded, hits: report.hits.slice(0, shown),
+        omitted: Math.max(0, report.hits.length - shown),
+        trace: { file: outFile, events: report.trace.events.length, readOnly: true }, checks: report.checks,
+      }, null, 2));
+      if (!checksOk(report.checks)) process.exitCode = 1;
+      return;
+    }
     console.log(`ask: "${report.question}" over ${report.storeNotes} remembered notes (${storeFile})`);
     if (report.observationInterval !== undefined) {
       console.log(

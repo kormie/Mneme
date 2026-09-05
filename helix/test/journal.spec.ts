@@ -145,4 +145,18 @@ describe("--journal on the CLI", () => {
       "--store", storeFile, "--core", join(dir, "no-core.json"), "--out", join(dir, "a.json")]);
     expect(a.stdout).toContain("tip: --journal renders a period like this as a day-by-day journal");
   });
+
+  it("--json returns journal entries in the same ascending display order", async () => {
+    const dir = tmp("json");
+    const storeFile = join(dir, "store.json");
+    week(storeFile);
+    const out = join(dir, "j.json");
+    const { stdout, stderr } = await run("bun", [TRAY, "--journal", "this week", "--json", "--limit", "2",
+      "--as-of", "2026-09-05", "--store", storeFile, "--core", join(dir, "no-core.json"), "--out", out]);
+    expect(stderr).toBe("");
+    const parsed = JSON.parse(stdout) as { mode: string; entries: { note: string }[]; omitted: number; trace: { file: string } };
+    expect(parsed).toMatchObject({ mode: "journal", entries: [{ note: "cc-mon-a" }, { note: "cc-wed-a" }],
+      omitted: 3, trace: { file: out } });
+    expect(stdout).not.toContain("journal:");
+  });
 });

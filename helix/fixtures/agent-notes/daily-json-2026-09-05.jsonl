@@ -1,0 +1,1 @@
+{"id":"an-daily-json-2026-09-05","t":1788629300430,"channel":"claude-code","kind":"agent-note","text":"Structured tray reads keep trace generation before presentation\n\nAsk and journal JSON reuse runAsk and journalLines so routing, hit order, and trace bytes stay unchanged; limit remains presentation only. Pinned by cli.spec.ts and journal.spec.ts."}
