@@ -1,5 +1,6 @@
 import Base
 import ./Kernel.bend as K
+import ./Util.bend as U
 
 # Port of spec/lean/Trace.lean (the temporal fragment). Mirrors the Lean source;
 # it never extends it. Every def names its Lean counterpart.
@@ -27,14 +28,6 @@ type TraceEvent is Data:
   PromptAudit{}
   StewardAck{id: String}
 
-# Lean: `acks.any (· == id)`
-def mem(+xs: List<&2, String>, +x: String) -> Bool:
-  match xs:
-    case Nil{}:
-      False{}
-    case Con{h, t}:
-      (String.eq(h, x) || mem(t, x))
-
 # Picks between "drop the head" and "keep it", given the recursive result.
 def eraseStep(b: Bool, +h: String, +t: List<&2, String>, +r: List<&2, String>) -> List<&2, String>:
   match b:
@@ -59,7 +52,7 @@ def installRequiresAck.go(+evs: List<&2, TraceEvent>, +acks: List<&2, String>) -
     case Con{StewardAck{id}, rest}:
       installRequiresAck.go(rest, id <> acks)
     case Con{TwinInstall{id}, rest}:
-      (mem(acks, id) && installRequiresAck.go(rest, erase(acks, id)))
+      (U.mem(acks, id) && installRequiresAck.go(rest, erase(acks, id)))
     case Con{_, rest}:
       installRequiresAck.go(rest, acks)
 
@@ -129,9 +122,9 @@ def twinIdRequiresInstall.go(+evs: List<&2, TraceEvent>, +installed: List<&2, St
     case Con{TwinInstall{id}, rest}:
       twinIdRequiresInstall.go(rest, id <> installed)
     case Con{StoreRead{_, Some{t}}, rest}:
-      (mem(installed, t) && twinIdRequiresInstall.go(rest, installed))
+      (U.mem(installed, t) && twinIdRequiresInstall.go(rest, installed))
     case Con{StoreWrite{_, Some{t}}, rest}:
-      (mem(installed, t) && twinIdRequiresInstall.go(rest, installed))
+      (U.mem(installed, t) && twinIdRequiresInstall.go(rest, installed))
     case Con{_, rest}:
       twinIdRequiresInstall.go(rest, installed)
 

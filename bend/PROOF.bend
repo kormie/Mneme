@@ -123,3 +123,60 @@ def Laws.ghost_in_trace_red():
 
 def Laws.empty_trace_valid(k):
   {==}
+
+def Laws.well_formed_green():
+  {==}
+
+def Laws.no_graphs_red():
+  {==}
+
+def Laws.duplicate_graph_red():
+  {==}
+
+def Laws.missing_core_layer_red():
+  {==}
+
+def Laws.missing_lineage_store_red():
+  {==}
+
+def Laws.ill_formed_graph_makes_kernel_red():
+  {==}
+
+def Laws.layers_four_green():
+  {==}
+
+def Laws.layers_four_missing_red():
+  {==}
+
+def Laws.layers_four_empty_red():
+  {==}
+
+def Laws.graph_wf_green():
+  {==}
+
+def Laws.duplicate_node_red():
+  {==}
+
+def Laws.empty_node_id_red():
+  {==}
+
+def Laws.dangling_edge_red():
+  {==}
+
+def Laws.bad_version_red():
+  {==}
+
+def Laws.short_version_red():
+  {==}
+
+def Laws.versioned_prefix_green():
+  {==}
+
+def Laws.nodup_empty_green():
+  {==}
+
+def Laws.nodup_distinct_green():
+  {==}
+
+def Laws.nodup_repeat_red():
+  {==}
