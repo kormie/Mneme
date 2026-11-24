@@ -121,3 +121,59 @@ def edgeExists(+graphs: List<&2, Graph>, +e: String) -> Bool:
       False{}
     case Con{Graph{_, _, edges, _}, t}:
       (edgesAny(edges, e) || edgeExists(t, e))
+
+# --- Accessors and port queries used by the decidable laws. ---
+
+def nodePorts(+n: Node) -> List<&2, Port>:
+  match n:
+    case Node{_, _, ports}:
+      ports
+
+def isTransform(+k: NodeKind) -> Bool:
+  match k:
+    case Prompt{}:
+      False{}
+    case Transform{}:
+      True{}
+
+def nodeIsTransform(+n: Node) -> Bool:
+  match n:
+    case Node{_, kind, _}:
+      isTransform(kind)
+
+# Lean: `Node.hasPortType` (`n.ports.any (·.type == ty)`).
+def portsHaveType(+ps: List<&2, Port>, +ty: String) -> Bool:
+  match ps:
+    case Nil{}:
+      False{}
+    case Con{Port{_, pty, _}, t}:
+      (String.eq(pty, ty) || portsHaveType(t, ty))
+
+def hasPortType(+n: Node, +ty: String) -> Bool:
+  portsHaveType(nodePorts(n), ty)
+
+# Lean: `Node.hasOutType` (`n.ports.any (fun p => p.dir == .out && p.type == ty)`).
+def portsHaveOutType(+ps: List<&2, Port>, +ty: String) -> Bool:
+  match ps:
+    case Nil{}:
+      False{}
+    case Con{Port{_, pty, DirOut{}}, t}:
+      (String.eq(pty, ty) || portsHaveOutType(t, ty))
+    case Con{_, t}:
+      portsHaveOutType(t, ty)
+
+def hasOutType(+n: Node, +ty: String) -> Bool:
+  portsHaveOutType(nodePorts(n), ty)
+
+# Lean: `g.nodes.any (·.id == id)`.
+def nodesHave(+nodes: List<&2, Node>, +id: String) -> Bool:
+  match nodes:
+    case Nil{}:
+      False{}
+    case Con{n, t}:
+      (String.eq(nodeId(n), id) || nodesHave(t, id))
+
+def graphNodes(+g: Graph) -> List<&2, Node>:
+  match g:
+    case Graph{_, nodes, _, _}:
+      nodes

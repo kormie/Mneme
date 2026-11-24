@@ -77,3 +77,35 @@ def noLineageLayers() -> List<&2, K.Layer>:
     K.Layer{"longterm", ["episodic", "semantic", "skills", "structural"], []},
     K.Layer{"core", [], []}
   ]
+
+# --- Builders for the decidable-law fixtures. No Lean counterpart. ---
+
+def xform(id: String) -> K.Node:
+  K.Node{id, K.Transform{}, []}
+
+def prompt(id: String) -> K.Node:
+  K.Node{id, K.Prompt{}, []}
+
+def nodeWith(id: String, kind: K.NodeKind, ports: List<&2, K.Port>) -> K.Node:
+  K.Node{id, kind, ports}
+
+def portIn(ty: String) -> K.Port:
+  K.Port{"p", ty, K.DirIn{}}
+
+def portOut(ty: String) -> K.Port:
+  K.Port{"p", ty, K.DirOut{}}
+
+def graphOf(id: String, nodes: List<&2, K.Node>) -> K.Graph:
+  K.Graph{id, nodes, [], "mneme.graph/1"}
+
+def kernelG(graphs: List<&2, K.Graph>) -> K.Kernel:
+  K.Kernel{"mneme.spec/0.10", [], graphs, [], []}
+
+def kernelFrozen(graphs: List<&2, K.Graph>, frozen: List<&2, String>) -> K.Kernel:
+  K.Kernel{"mneme.spec/0.10", [], graphs, [], frozen}
+
+def kernelTwins(twins: List<&2, K.Twin>) -> K.Kernel:
+  K.Kernel{"mneme.spec/0.10", [], [], twins, []}
+
+def hybridNodes() -> List<&2, K.Node>:
+  [xform("semantic"), xform("skill"), xform("structural"), xform("hybrid"), xform("align"), xform("commit")]

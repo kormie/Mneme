@@ -180,3 +180,93 @@ def Laws.nodup_distinct_green():
 
 def Laws.nodup_repeat_red():
   {==}
+
+def Laws.frozen_transform_green():
+  {==}
+
+def Laws.frozen_nothing_green():
+  {==}
+
+def Laws.frozen_found_in_later_graph_green():
+  {==}
+
+def Laws.frozen_prompt_red():
+  {==}
+
+def Laws.frozen_missing_red():
+  {==}
+
+def Laws.structural_transform_green():
+  {==}
+
+def Laws.structural_prompt_red():
+  {==}
+
+def Laws.structural_absent_red():
+  {==}
+
+def Laws.structural_wrong_graph_red():
+  {==}
+
+def Laws.hybrid_green():
+  {==}
+
+def Laws.hybrid_missing_commit_red():
+  {==}
+
+def Laws.hybrid_no_graph_red():
+  {==}
+
+def Laws.hybrid_wrong_graph_red():
+  {==}
+
+def Laws.author_green():
+  {==}
+
+def Laws.author_emits_identity_red():
+  {==}
+
+def Laws.author_emits_inclusion_red():
+  {==}
+
+def Laws.author_reads_identity_green():
+  {==}
+
+def Laws.author_absent_red():
+  {==}
+
+def Laws.self_and_auth_green():
+  {==}
+
+def Laws.self_and_auth_missing_auth_red():
+  {==}
+
+def Laws.self_and_auth_wrong_graph_red():
+  {==}
+
+def Laws.cap_token_port_green():
+  {==}
+
+def Laws.cap_token_port_any_direction_green():
+  {==}
+
+def Laws.cap_token_port_absent_red():
+  {==}
+
+def Laws.cap_token_array_is_not_cap_token_red():
+  {==}
+
+def Laws.twin_origin_green():
+  {==}
+
+def Laws.twin_origin_empty_red():
+  {==}
+
+def Laws.action_gate_green():
+  {==}
+
+def Laws.action_gate_missing_bind_red():
+  {==}
+
+def Laws.action_gate_wrong_graph_red():
+  {==}
