@@ -1,6 +1,7 @@
 import Base
 import ./Kernel.bend as K
 import ./Util.bend as U
+import ./WellFormed.bend as W
 
 # Port of spec/lean/Laws.lean, part 1: the first eight decidable laws.
 # Each Lean `fooB k : Bool` is `foo(k)` here. Mirrors Lean, never extends it.
@@ -139,3 +140,170 @@ def actionGateOf(+mg: Maybe<&2, K.Graph>) -> Bool:
 # Lean: `hasActionGateB`.
 def hasActionGate(+k: K.Kernel) -> Bool:
   actionGateOf(K.graphFind(kGraphs(k), "pg-twin"))
+
+# --- Part 2: the remaining eight decidable laws and the `Laws` conjunction. ---
+
+# Lean: `partitionProposeNoInstallB`. partition.propose proposes a TwinSpec,
+# never installs, and records lineage.
+def partitionProposeOf(+mg: Maybe<&2, K.Graph>, +mn: Maybe<&2, K.Node>, +hasLineage: Bool) -> Bool:
+  match mg mn:
+    case Some{g} Some{n}:
+      (
+        K.hasOutType(n, "TwinSpec") &&
+        Bool.not(K.hasOutType(n, "DomainAck")) &&
+        Bool.not(K.portsHaveName(K.nodePorts(n), "install")) &&
+        Bool.not(K.edgesAnyFromTo(K.graphEdges(g), "partition-propose", "reindex")) &&
+        hasLineage &&
+        K.edgesAnyFromTo(K.graphEdges(g), "partition-propose", "lineage-record")
+      )
+    case _ _:
+      False{}
+
+def partitionProposeNoInstall(+k: K.Kernel) -> Bool:
+  partitionProposeOf(
+    K.graphFind(kGraphs(k), "pg-adl"),
+    K.findNode(k, "pg-adl", "partition-propose"),
+    K.isSome(&2, K.Node, K.findNode(k, "pg-adl", "lineage-record"))
+  )
+
+def reindexOf(+m: Maybe<&2, K.Node>) -> Bool:
+  match m:
+    case None{}:
+      False{}
+    case Some{n}:
+      Bool.not(K.hasPortType(n, "TwinSpec"))
+
+# Lean: `reindexNoSpecB`.
+def reindexNoSpec(+k: K.Kernel) -> Bool:
+  reindexOf(K.findNode(k, "pg-adl", "reindex"))
+
+def bindOf(+m: Maybe<&2, K.Node>) -> Bool:
+  match m:
+    case None{}:
+      False{}
+    case Some{n}:
+      (
+        K.hasPortType(n, "CapToken[]") &&
+        Bool.not(K.hasOutType(n, "CapToken[]") || K.hasOutType(n, "CapToken"))
+      )
+
+# Lean: `bindIntersectsTokensB`. core-bind takes tokens in and emits none.
+def bindIntersectsTokens(+k: K.Kernel) -> Bool:
+  bindOf(K.findNode(k, "pg-twin", "core-bind"))
+
+def archiveOf(+mr: Maybe<&2, K.Node>, +ma: Maybe<&2, K.Node>) -> Bool:
+  match mr ma:
+    case Some{r} Some{a}:
+      (K.hasOutType(r, "LineageArchive") && K.nodeIsTransform(a))
+    case _ _:
+      False{}
+
+# Lean: `archiveKeepsLosersB`.
+def archiveKeepsLosers(+k: K.Kernel) -> Bool:
+  archiveOf(K.findNode(k, "pg-dem", "register"), K.findNode(k, "pg-dem", "archive"))
+
+def bothTransform(+ma: Maybe<&2, K.Node>, +mb: Maybe<&2, K.Node>) -> Bool:
+  match ma mb:
+    case Some{a} Some{b}:
+      (K.nodeIsTransform(a) && K.nodeIsTransform(b))
+    case _ _:
+      False{}
+
+# Lean: `evalHiddenB`.
+def evalHidden(+k: K.Kernel) -> Bool:
+  bothTransform(K.findNode(k, "pg-dem", "validate"), K.findNode(k, "pg-adl", "holdout"))
+
+# Lean: `cutClassifyB`.
+def cutClassify(+k: K.Kernel) -> Bool:
+  bothTransform(K.findNode(k, "pg-adl", "cut-class"), K.findNode(k, "pg-adl", "cluster"))
+
+# Lean: `e.kind != .control || e.guard != ""`.
+def guardOk(+kind: K.EdgeKind, +guard: String) -> Bool:
+  match kind:
+    case K.DataEdge{}:
+      True{}
+    case K.ControlEdge{}:
+      Bool.not(String.is_empty(guard))
+
+def edgeRoutable(+e: K.Edge) -> Bool:
+  match e:
+    case K.Edge{_, _, _, fromPort, toPort, kind, _, guard}:
+      (
+        Bool.not(String.is_empty(fromPort)) &&
+        Bool.not(String.is_empty(toPort)) &&
+        guardOk(kind, guard)
+      )
+
+def edgesRoutable(+edges: List<&2, K.Edge>) -> Bool:
+  match edges:
+    case Nil{}:
+      True{}
+    case Con{e, t}:
+      (edgeRoutable(e) && edgesRoutable(t))
+
+def graphsRoutable(+graphs: List<&2, K.Graph>) -> Bool:
+  match graphs:
+    case Nil{}:
+      True{}
+    case Con{g, t}:
+      (edgesRoutable(K.graphEdges(g)) && graphsRoutable(t))
+
+# Lean: `portRoutableB`. Edges name ports; control edges carry a guard.
+def portRoutable(+k: K.Kernel) -> Bool:
+  graphsRoutable(kGraphs(k))
+
+def emitsEffect(+n: K.Node) -> Bool:
+  (
+    K.hasOutType(n, "Permit") ||
+    K.hasOutType(n, "ExternalEffect") ||
+    K.hasOutType(n, "TwinId") ||
+    K.hasOutType(n, "CoreStore") ||
+    K.hasOutType(n, "LTM") ||
+    K.hasOutType(n, "LineageArchive")
+  )
+
+def anyEmitsEffect(+nodes: List<&2, K.Node>) -> Bool:
+  match nodes:
+    case Nil{}:
+      False{}
+    case Con{n, t}:
+      (emitsEffect(n) || anyEmitsEffect(t))
+
+def auditOf(+mg: Maybe<&2, K.Graph>, +mh: Maybe<&2, K.Node>, +ms: Maybe<&2, K.Node>) -> Bool:
+  match mg mh ms:
+    case Some{g} Some{h} Some{s}:
+      (K.nodeIsTransform(h) && K.nodeIsTransform(s) && Bool.not(anyEmitsEffect(K.graphNodes(g))))
+    case _ _ _:
+      False{}
+
+# Lean: `auditNotGateB`. Audit heuristics are transforms and the audit graph
+# emits no permit, effect, twin id, store, LTM or archive.
+def auditNotGate(+k: K.Kernel) -> Bool:
+  auditOf(
+    K.graphFind(kGraphs(k), "pg-audit"),
+    K.findNode(k, "pg-audit", "audit-heuristics"),
+    K.findNode(k, "pg-audit", "sample-clean")
+  )
+
+# Lean: `Laws`. The conjunction of the decidable laws; an inhabitant is the
+# static certificate. `W.wellFormed` is the first conjunct, as in Lean.
+def laws(+k: K.Kernel) -> Bool:
+  (
+    W.wellFormed(k) &&
+    frozenTransforms(k) &&
+    structuralIsTransform(k) &&
+    hybridDeclared(k) &&
+    authorNotCore(k) &&
+    hasSelfAndAuth(k) &&
+    capTokenPort(k) &&
+    twinOrigin(k) &&
+    hasActionGate(k) &&
+    partitionProposeNoInstall(k) &&
+    reindexNoSpec(k) &&
+    bindIntersectsTokens(k) &&
+    archiveKeepsLosers(k) &&
+    evalHidden(k) &&
+    cutClassify(k) &&
+    portRoutable(k) &&
+    auditNotGate(k)
+  )
