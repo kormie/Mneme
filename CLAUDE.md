@@ -20,3 +20,12 @@ what is genuinely specific to running as Claude Code in this repo.
   repo's Claude-Code-specific automation (hooks, subagents, and skills,
   respectively). Check those directories for what is currently
   configured; they are maintained independently of this file.
+
+## Bend
+
+When using Bend:
+
+- run `bend guide` to learn it
+- use `LAWS.bend` to keep important rules
+- run `bend PROOF.bend` before committing
+- parallelize the code whenever possible
