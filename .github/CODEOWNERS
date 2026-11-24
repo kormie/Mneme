@@ -55,3 +55,9 @@
 /scripts/sync-lean.sh     @kormie
 /scripts/bootstrap.sh     @kormie
 /scripts/install-elan.sh  @kormie
+
+# The Bend verification layer's installer and pins decide which Bend binary
+# and which Lean toolchain the required `bend laws` check runs under.
+/scripts/install-bend.sh  @kormie
+/bend/.bend-version       @kormie
+/bend/.bend-lean-toolchain @kormie

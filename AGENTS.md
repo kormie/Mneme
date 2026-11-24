@@ -39,6 +39,13 @@ The steward is Kormie (@kormie). Agents implement; the human steers.
   `proofs/Mneme/` is generated and gitignored; never edit it.
 - `helix/` — the ADR-013 slice. TypeScript on Bun 1.3+ (`bun test`);
   the Claude Code hook adapter stays dependency-free Node.
+- `bend/` — the Bend verification layer: a second, independent check of
+  the same laws over the same kernel IR. **Lean stays the certificate of
+  record**; a Bend result is evidence, not a certificate (see "The Bend
+  layer" below and `bend/README.md`). `bend/KernelIR.bend` is generated
+  by `cd helix && bun src/bend-export.ts`; never edit it.
+- `scripts/install-bend.sh` — installs the pinned Bend release
+  (`bend/.bend-version`, sha256-checked). CI and local setup share it.
 
 ## Commands
 
@@ -49,6 +56,9 @@ cd helix && bun run typecheck         # strict tsc
 bun helix/src/judge.ts                # untrusted judge over spec/inhabitants.md (see helix/JUDGE.md)
 ./scripts/sync-lean.sh                # refresh generated Lean sources
 cd proofs && lake build               # check all laws + Regressions + KernelIR certificate (elan/Lean 4.33.1)
+./scripts/install-bend.sh             # install the pinned Bend, if missing
+cd bend && bend PROOF.bend            # Bend laws over the real kernel (second check; see "The Bend layer")
+cd bend && bend PROOF.bend --verdict  # recheck with Bend's Lean-proven kernel (needs Lean v4.34.0, see bend/README.md)
 ```
 
 CI runs exactly these. A session is not done until all of them pass.
@@ -78,7 +88,8 @@ whoever actually ran the commands.
    (cap.mint/revoke), twin installs, the frozen surfaces (validate,
    holdout, cut-class, structural, archive, audit-heuristics,
    sample-clean), accepting a Certificate or RuntimeCertificate as done,
-   changing the Lean law set, or force-pushing anything. In Claude Code,
+   changing the Lean law set, making Bend rather than Lean the certifier,
+   or force-pushing anything. In Claude Code,
    `.claude/settings.json`'s `Edit`/`Write`-deny on `spec/**` and
    `spec.sha256`, plus the PreToolUse hook at
    `.claude/hooks/guard-spec-writes.sh` (which also denies Bash-shaped
@@ -138,6 +149,29 @@ authorization.
 5. Export the trace to Lean and produce the `RuntimeCertificate` term the
    steward accepts: trace embedded, pure `decide`, axiom guard clean.
 
+## The Bend layer (a second checker, not the certifier)
+
+`bend/` ports `spec/lean/` into [Bend](https://bend-lang.com) and proves
+the same laws over the same kernel IR (`bend/KernelIR.bend`, exported from
+`spec/kernel.json` by the same projection `proofs/KernelIR.lean` uses). It
+is a second, independent check and groundwork for a possible later change
+of certifier. Today:
+
+- Lean stays the certificate of record (law 6, ADR-008). A passing Bend
+  proof or `bend laws` job is evidence, never a `Certificate` or
+  `RuntimeCertificate`.
+- `bend/` mirrors, never extends: no law, invariant, or event vocabulary
+  that Lean lacks. `helix/test/bend-parity.spec.ts` fails if the Lean pack
+  states something Bend does not port, so a new pack must bring `bend/`
+  with it.
+- Every law in `bend/LAWS.bend` has a plain-English comment directly above
+  it, and `bend/PROOF.bend` proves every law. Run `bend PROOF.bend` before
+  committing Bend changes.
+- CI's `bend laws` job must pass before a PR merges to `main`.
+- Making Bend, rather than Lean, the certifier changes the spec pack's
+  definition of done. It needs a steward-issued new pack (see "Importing a
+  new pack"), and is a steward gate: stop and ask Kormie.
+
 ## Known spec issues (report, do not patch)
 
 - **SPEC ISSUE #1** — `spec/lean/Negatives.lean:55`
@@ -187,7 +221,7 @@ Only when Kormie hands over a new versioned zip:
 
 ## Conventions
 
-- Conventional-ish commits: `helix:`, `proofs:`, `spec:`, `ci:`, `docs:`.
+- Conventional-ish commits: `helix:`, `proofs:`, `bend:`, `spec:`, `ci:`, `docs:`.
 - Small, reviewable changes. Tests accompany behavior.
 - Never commit generated dirs (`proofs/Mneme/`, `node_modules/`,
   `.lake/`).
