@@ -67,7 +67,10 @@ do not proceed to the next step.
 
    `install-bend.sh` installs the release pinned in `bend/.bend-version`
    if it is missing. `--verdict` rechecks every proof with Bend's
-   Lean-proven kernel (about 20 seconds). Bend is a second check of the same
+   Lean-proven kernel (about 20 seconds), which it builds with the Lean
+   toolchain in `bend/.bend-lean-toolchain` (currently v4.34.0, not the
+   v4.33.1 that `proofs/` pins); run `elan default "$(cat
+   bend/.bend-lean-toolchain)"` if `lean` is not that version. Bend is a second check of the same
    laws, not a certificate: Lean's `KernelIR.certificate` stays the artifact
    of record.
 

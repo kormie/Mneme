@@ -16,6 +16,13 @@ cd bend && bend PROOF.bend --verdict   # recheck with Bend's Lean-proven kernel 
 
 Run `bend PROOF.bend` before committing Bend changes.
 
+`--verdict` builds Bend's proven kernel with Lean, so it needs the toolchain
+named in `bend/.bend-lean-toolchain` (currently `leanprover/lean4:v4.34.0`) on
+`PATH`, for example `elan default "$(cat bend/.bend-lean-toolchain)"`. That is
+a different Lean from the one the `proofs/` project pins (`proofs/lean-toolchain`);
+the two do not interact. The first `--verdict` builds the kernel into
+`~/.bend/bendtt`; later runs reuse it.
+
 `./scripts/install-bend.sh` installs the pinned release (`bend/.bend-version`)
 with its sha256 checked, into `~/.bend`. CI's `bend laws` job runs the same
 script, then both commands above. To bump the pin, change `.bend-version` and

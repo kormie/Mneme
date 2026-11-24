@@ -52,9 +52,20 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.bend
-          key: bend-${{ runner.os }}-${{ hashFiles('bend/.bend-version', 'scripts/install-bend.sh') }}
+          key: bend-${{ runner.os }}-${{ hashFiles('bend/.bend-version', 'bend/.bend-lean-toolchain', 'scripts/install-bend.sh') }}
       - name: install bend
         run: ./scripts/install-bend.sh
       - run: cd bend && bend PROOF.bend
+      # `--verdict` builds Bend's proven kernel (bendtt.lean) with the Lean
+      # toolchain in bend/.bend-lean-toolchain. That is not the toolchain the
+      # `lean laws` job uses (proofs/lean-toolchain), so it has its own cache.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.elan
+          key: elan-bend-${{ runner.os }}-${{ hashFiles('bend/.bend-lean-toolchain') }}
+      - name: install elan
+        run: ./scripts/install-elan.sh
+      - name: install the Lean that builds Bend's proven kernel
+        run: elan default "$(cat bend/.bend-lean-toolchain)"
       - name: recheck with the proven kernel
         run: cd bend && bend PROOF.bend --verdict
