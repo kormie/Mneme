@@ -16,6 +16,28 @@ cd bend && bend PROOF.bend --verdict   # recheck with Bend's Lean-proven kernel 
 
 Run `bend PROOF.bend` before committing Bend changes.
 
+`./scripts/install-bend.sh` installs the pinned release (`bend/.bend-version`)
+with its sha256 checked, into `~/.bend`. CI's `bend laws` job runs the same
+script, then both commands above. To bump the pin, change `.bend-version` and
+add the new release's sha256s to the script (copy them from
+`https://bend-lang.com/install.sh`).
+
+## What CI checks, and what it does not
+
+- The `bend laws` job runs `bend PROOF.bend` and `--verdict`.
+- `helix/test/bend-parity.spec.ts` (in the `helix` job) checks coverage from
+  the sources alone: every `kernel_*` theorem in `proofs/KernelIR.lean` has a
+  Bend law, in Lean's order; every ADR-014 negative has one; every Lean
+  predicate in `Trace`, `Laws` and `WellFormed` has a Bend def; and every law
+  has a plain-English comment. If a new spec pack adds a law, this fails until
+  `bend/` ports it.
+- `helix/test/bend-export.spec.ts` keeps `KernelIR.bend` byte-identical to the
+  generator's output.
+
+Coverage is not agreement: these checks show Bend states what Lean states, and
+that Bend's proofs hold, not that every Bend predicate computes exactly what
+its Lean twin does on every input. Lean stays the certificate of record.
+
 ## Layout
 
 Each module mirrors a file in `spec/lean/`; every def names its Lean

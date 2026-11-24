@@ -1,11 +1,11 @@
 ---
 name: ci-local
-description: Runs MNEME's three CI jobs locally, in the same order as .github/workflows/ci.yml, stopping at the first failure and naming the CI job it corresponds to. Use before opening a PR, after making changes under spec/, helix/, or proofs/, or when asked to "run CI locally", "check CI will pass", or "verify the pack, helix, and proofs".
+description: Runs MNEME's four CI jobs locally, in the same order as .github/workflows/ci.yml, stopping at the first failure and naming the CI job it corresponds to. Use before opening a PR, after making changes under spec/, helix/, proofs/, or bend/, or when asked to "run CI locally", "check CI will pass", or "verify the pack, helix, proofs, and bend".
 ---
 
 # CI, locally
 
-Mirrors `.github/workflows/ci.yml` exactly: three jobs, run in order, each a
+Mirrors `.github/workflows/ci.yml` exactly: four jobs, run in order, each a
 prerequisite for the ones after it. Stop at the first failure — do not run
 later jobs once one fails, and do not "fix" the failure by editing anything
 under `spec/` (read-only canon, AGENTS.md law #1).
@@ -56,9 +56,24 @@ do not proceed to the next step.
    `Regressions.lean`, and the `KernelIR.certificate` axiom guard. Requires
    elan/Lean 4.33.1 on `PATH`.
 
-## When all three pass
+4. **`bend` job** (CI job name: `bend laws`)
 
-Report success per job (`spec integrity`, `helix`, `lean laws`) — this is
+   ```sh
+   ./scripts/install-bend.sh
+   cd bend
+   bend PROOF.bend
+   bend PROOF.bend --verdict
+   ```
+
+   `install-bend.sh` installs the release pinned in `bend/.bend-version`
+   if it is missing. `--verdict` rechecks every proof with Bend's
+   Lean-proven kernel (about 20 seconds). Bend is a second check of the same
+   laws, not a certificate: Lean's `KernelIR.certificate` stays the artifact
+   of record.
+
+## When all four pass
+
+Report success per job (`spec integrity`, `helix`, `lean laws`, `bend laws`) — this is
 "CI would pass locally," not a certificate. It does not upgrade anything's
 status on the brief's §13 ladder (judged / certified static / certified
 runtime); it only means the same commands CI runs also succeeded here.

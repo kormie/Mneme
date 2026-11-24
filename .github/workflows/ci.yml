@@ -41,3 +41,20 @@ jobs:
         run: ./scripts/install-elan.sh
       - run: ./scripts/sync-lean.sh
       - run: cd proofs && lake build
+
+  bend:
+    name: bend laws
+    runs-on: ubuntu-latest
+    env:
+      BEND_NO_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bend
+          key: bend-${{ runner.os }}-${{ hashFiles('bend/.bend-version', 'scripts/install-bend.sh') }}
+      - name: install bend
+        run: ./scripts/install-bend.sh
+      - run: cd bend && bend PROOF.bend
+      - name: recheck with the proven kernel
+        run: cd bend && bend PROOF.bend --verdict
