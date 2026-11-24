@@ -13,6 +13,12 @@ def Laws.amortized_permit_red():
 def Laws.audit_does_not_consume_red():
   {==}
 
+def Laws.ghost_edge_red():
+  {==}
+
+def Laws.attacks_red():
+  {==}
+
 def Laws.acked_install_green():
   {==}
 
@@ -92,4 +98,28 @@ def Laws.leaving_audit_green():
   {==}
 
 def Laws.staying_in_audit_red():
+  {==}
+
+def Laws.node_in_kernel_green():
+  {==}
+
+def Laws.ghost_node_red():
+  {==}
+
+def Laws.ghost_graph_red():
+  {==}
+
+def Laws.edge_in_kernel_green():
+  {==}
+
+def Laws.unnamed_event_exists(k):
+  {==}
+
+def Laws.valid_trace_green():
+  {==}
+
+def Laws.ghost_in_trace_red():
+  {==}
+
+def Laws.empty_trace_valid(k):
   {==}

@@ -1,6 +1,8 @@
 import Base
+import ./Kernel.bend as K
 import ./Trace.bend as T
 import ./Negatives.bend as N
+import ./Fixtures.bend as F
 
 # Human-written claims. The AI does not touch this file.
 # Each law names its Lean counterpart in spec/lean (see spec/inhabitants.md).
@@ -19,6 +21,15 @@ law amortized_permit_red:
 
 law audit_does_not_consume_red:
   {T.commitAfterPermit(N.auditDoesNotConsume()) == False{} : Bool}
+
+# Ghost edge: 0.8's ValidTrace ignored edgeFire.
+law ghost_edge_red:
+  {T.mentionsExist(N.emptyKernel(), N.ghostEdge()) == False{} : Bool}
+
+# --- INV-ATTACKS-RED (Negatives.attacksRed): all five at once. ---
+
+law attacks_red:
+  {N.attacksRed() == True{} : Bool}
 
 # --- INV-INSTALL-REQUIRES-ACK (Trace.InstallRequiresAck) ---
 
@@ -125,3 +136,32 @@ law leaving_audit_green:
 
 law staying_in_audit_red:
   {T.auditNotEffect([T.PromptAudit{}, T.NodeEnter{"pg-audit", "audit-heuristics"}, T.StoreWrite{"ltm", None{}}]) == False{} : Bool}
+
+# --- Trace.ValidTrace / mentionsExist (kernel-dependent) ---
+
+law node_in_kernel_green:
+  {T.mentionsExist(F.tinyKernel(), T.NodeEnter{"pg-t", "a"}) == True{} : Bool}
+
+law ghost_node_red:
+  {T.mentionsExist(F.tinyKernel(), T.NodeEnter{"pg-t", "zz"}) == False{} : Bool}
+
+law ghost_graph_red:
+  {T.mentionsExist(F.tinyKernel(), T.NodeExit{"pg-zz", "a"}) == False{} : Bool}
+
+law edge_in_kernel_green:
+  {T.mentionsExist(F.tinyKernel(), T.EdgeFire{"e1"}) == True{} : Bool}
+
+# Events that name no node or edge always exist, in every kernel.
+law unnamed_event_exists:
+  for k: K.Kernel
+  {T.mentionsExist(k, T.CorePermit{}) == True{} : Bool}
+
+law valid_trace_green:
+  {T.validTrace(F.tinyKernel(), [T.NodeEnter{"pg-t", "a"}, T.EdgeFire{"e1"}, T.NodeExit{"pg-t", "b"}]) == True{} : Bool}
+
+law ghost_in_trace_red:
+  {T.validTrace(F.tinyKernel(), [T.NodeEnter{"pg-t", "a"}, T.EdgeFire{"zz9"}]) == False{} : Bool}
+
+law empty_trace_valid:
+  for k: K.Kernel
+  {T.validTrace(k, []) == True{} : Bool}
