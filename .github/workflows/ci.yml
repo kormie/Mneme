@@ -69,3 +69,36 @@ jobs:
         run: elan default "$(cat bend/.bend-lean-toolchain)"
       - name: recheck with the proven kernel
         run: cd bend && bend PROOF.bend --verdict
+
+  differential:
+    name: differential
+    runs-on: ubuntu-latest
+    env:
+      BEND_NO_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: helix/.bun-version
+      - run: bun install --frozen-lockfile
+        working-directory: helix
+      - uses: actions/cache@v4
+        with:
+          path: ~/.elan
+          key: elan-${{ runner.os }}-${{ hashFiles('proofs/lean-toolchain') }}
+      - name: install elan
+        run: ./scripts/install-elan.sh
+      # Lean evaluates the pack's own predicates, so the proofs must be built.
+      - run: ./scripts/sync-lean.sh
+      - run: cd proofs && lake build
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bend
+          key: bend-${{ runner.os }}-${{ hashFiles('bend/.bend-version', 'bend/.bend-lean-toolchain', 'scripts/install-bend.sh') }}
+      - name: install bend
+        run: ./scripts/install-bend.sh
+      # Runs Lean, Bend and the TypeScript mirrors on the same seeded corpus
+      # and fails on any disagreement with Lean (the certificate of record).
+      - name: compare Lean, Bend and the TypeScript mirrors
+        run: bun src/differential.ts
+        working-directory: helix

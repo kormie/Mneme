@@ -1,11 +1,11 @@
 ---
 name: ci-local
-description: Runs MNEME's four CI jobs locally, in the same order as .github/workflows/ci.yml, stopping at the first failure and naming the CI job it corresponds to. Use before opening a PR, after making changes under spec/, helix/, proofs/, or bend/, or when asked to "run CI locally", "check CI will pass", or "verify the pack, helix, proofs, and bend".
+description: Runs MNEME's five CI jobs locally, in the same order as .github/workflows/ci.yml, stopping at the first failure and naming the CI job it corresponds to. Use before opening a PR, after making changes under spec/, helix/, proofs/, or bend/, or when asked to "run CI locally", "check CI will pass", or "verify the pack, helix, proofs, and bend".
 ---
 
 # CI, locally
 
-Mirrors `.github/workflows/ci.yml` exactly: four jobs, run in order, each a
+Mirrors `.github/workflows/ci.yml` exactly: five jobs, run in order, each a
 prerequisite for the ones after it. Stop at the first failure — do not run
 later jobs once one fails, and do not "fix" the failure by editing anything
 under `spec/` (read-only canon, AGENTS.md law #1).
@@ -74,9 +74,22 @@ do not proceed to the next step.
    laws, not a certificate: Lean's `KernelIR.certificate` stays the artifact
    of record.
 
-## When all four pass
+5. **`differential` job** (CI job name: `differential`)
 
-Report success per job (`spec integrity`, `helix`, `lean laws`, `bend laws`) — this is
+   ```sh
+   ./scripts/sync-lean.sh && (cd proofs && lake build)   # Lean's predicates must be built
+   cd helix
+   bun src/differential.ts
+   ```
+
+   Runs Lean, Bend and the TypeScript mirrors on one seeded corpus (about a
+   minute) and fails on any disagreement with Lean. It needs `lake` and
+   `bend` on `PATH` (`./scripts/install-bend.sh`). Pass `--keep` to keep the
+   generated `Diff.lean` and `Diff*.bend` for debugging.
+
+## When all five pass
+
+Report success per job (`spec integrity`, `helix`, `lean laws`, `bend laws`, `differential`) — this is
 "CI would pass locally," not a certificate. It does not upgrade anything's
 status on the brief's §13 ladder (judged / certified static / certified
 runtime); it only means the same commands CI runs also succeeded here.

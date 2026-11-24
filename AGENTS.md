@@ -59,6 +59,7 @@ cd proofs && lake build               # check all laws + Regressions + KernelIR 
 ./scripts/install-bend.sh             # install the pinned Bend, if missing
 cd bend && bend PROOF.bend            # Bend laws over the real kernel (second check; see "The Bend layer")
 cd bend && bend PROOF.bend --verdict  # recheck with Bend's Lean-proven kernel (needs Lean v4.34.0, see bend/README.md)
+cd helix && bun src/differential.ts   # Lean vs Bend vs the TS mirrors on a seeded corpus (needs lake and bend; see bend/README.md)
 ```
 
 CI runs exactly these. A session is not done until all of them pass.
@@ -168,6 +169,9 @@ of certifier. Today:
   it, and `bend/PROOF.bend` proves every law. Run `bend PROOF.bend` before
   committing Bend changes.
 - CI's `bend laws` job must pass before a PR merges to `main`.
+- CI's `differential` job runs Lean, Bend and the TypeScript mirrors on the
+  same generated inputs and fails if either of the others disagrees with Lean.
+  Agreement on a finite corpus is evidence, never a certificate.
 - Making Bend, rather than Lean, the certifier changes the spec pack's
   definition of done. It needs a steward-issued new pack (see "Importing a
   new pack"), and is a steward gate: stop and ask Kormie.
