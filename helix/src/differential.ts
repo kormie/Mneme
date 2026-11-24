@@ -54,8 +54,8 @@ export function parseRows(text: string): Map<string, string[]> {
   return rows;
 }
 
-function need(cmd: string, args: string[], hint: string): void {
-  const r = spawnSync(cmd, args, { encoding: "utf8" });
+function need(cmd: string, args: string[], hint: string, cwd?: string): void {
+  const r = spawnSync(cmd, args, { encoding: "utf8", cwd });
   if (r.error || r.status !== 0) throw new Error(`${cmd} is not usable: ${hint}`);
 }
 
@@ -133,7 +133,9 @@ export interface Options {
 }
 
 export function runDifferential(opts: Options): number {
-  need("lake", ["--version"], "install elan, then run ./scripts/sync-lean.sh && (cd proofs && lake build)");
+  // Run from proofs/: elan picks the toolchain from proofs/lean-toolchain, and
+  // has no default one (CI installs it with `--default-toolchain none`).
+  need("lake", ["--version"], "install elan, then run ./scripts/sync-lean.sh && (cd proofs && lake build)", resolve(ROOT, "proofs"));
   need("bend", ["version"], "run ./scripts/install-bend.sh");
 
   const baseIR = loadKernel();
