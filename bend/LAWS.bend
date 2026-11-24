@@ -5,6 +5,7 @@ import ./WellFormed.bend as W
 import ./Decidable.bend as D
 import ./Negatives.bend as N
 import ./Fixtures.bend as F
+import ./KernelIR.bend as R
 
 # Human-written claims. The AI does not touch this file.
 # Each law names its Lean counterpart in spec/lean (see spec/inhabitants.md).
@@ -755,3 +756,118 @@ law laws_fail_route:
 # Letting an audit node emit a Permit fails the conjunction.
 law laws_fail_audit:
   {D.laws(F.faultAudit()) == False{} : Bool}
+
+# --- The real kernel: spec/kernel.json, exported to bend/KernelIR.bend ---
+#
+# These are the Bend counterpart of `KernelIR.kernel_*` in proofs/KernelIR.lean.
+# A second, independent check of the same IR. Lean's certificate stays the
+# artifact of record (ADR-008): "proved here" is not "certified".
+
+# The real kernel (generated from spec/kernel.json) is well formed: four
+# layers, the required long-term stores, and every graph sound with unique
+# ids, resolvable edges and a mneme.graph/ version.
+law kernel_well_formed:
+  {W.wellFormed(R.kernel()) == True{} : Bool}
+
+# Every frozen id in the real kernel names a transform node, so the frozen
+# surfaces are code and not a model.
+law kernel_frozen_transforms:
+  {D.frozenTransforms(R.kernel()) == True{} : Bool}
+
+# The real kernel's structural node in pg-w2l is a transform.
+law kernel_structural_is_transform:
+  {D.structuralIsTransform(R.kernel()) == True{} : Bool}
+
+# The real pg-w2l declares all six nodes: semantic, skill, structural, hybrid,
+# align and commit.
+law kernel_hybrid_declared:
+  {D.hybridDeclared(R.kernel()) == True{} : Bool}
+
+# The real kernel's graph author emits neither an IdentitySnapshot nor an
+# InclusionReport.
+law kernel_author_not_core:
+  {D.authorNotCore(R.kernel()) == True{} : Bool}
+
+# The real pg-core declares both self-upd and twin-auth.
+law kernel_has_self_and_auth:
+  {D.hasSelfAndAuth(R.kernel()) == True{} : Bool}
+
+# The real twin-auth node has a CapToken port.
+law kernel_cap_token_port:
+  {D.capTokenPort(R.kernel()) == True{} : Bool}
+
+# The real kernel declares at least one twin.
+law kernel_twin_origin:
+  {D.twinOrigin(R.kernel()) == True{} : Bool}
+
+# The real pg-twin declares both action-gate and core-bind.
+law kernel_has_action_gate:
+  {D.hasActionGate(R.kernel()) == True{} : Bool}
+
+# The real partition proposer emits a TwinSpec, cannot install, never feeds
+# reindex directly, and records lineage.
+law kernel_partition_propose_no_install:
+  {D.partitionProposeNoInstall(R.kernel()) == True{} : Bool}
+
+# The real reindex node has no TwinSpec port in either direction.
+law kernel_reindex_no_spec:
+  {D.reindexNoSpec(R.kernel()) == True{} : Bool}
+
+# The real core-bind node receives a CapToken[] and emits no token.
+law kernel_bind_intersects_tokens:
+  {D.bindIntersectsTokens(R.kernel()) == True{} : Bool}
+
+# The real register node emits a LineageArchive and the real archive node is a
+# transform.
+law kernel_archive_keeps_losers:
+  {D.archiveKeepsLosers(R.kernel()) == True{} : Bool}
+
+# The real validate and holdout nodes are both transforms.
+law kernel_eval_hidden:
+  {D.evalHidden(R.kernel()) == True{} : Bool}
+
+# The real cut-class and cluster nodes are both transforms.
+law kernel_cut_classify:
+  {D.cutClassify(R.kernel()) == True{} : Bool}
+
+# Every edge in the real kernel names both ports, and every control edge
+# carries a guard.
+law kernel_port_routable:
+  {D.portRoutable(R.kernel()) == True{} : Bool}
+
+# The real audit graph is advice only: its heuristics and sample-clean are
+# transforms and nothing in it emits a permit, effect, twin id, store, LTM or
+# archive.
+law kernel_audit_not_gate:
+  {D.auditNotGate(R.kernel()) == True{} : Bool}
+
+# Assembly lemma, the Bend counterpart of the anonymous constructor in
+# `KernelIR.kernel_laws`: for any kernel, if each of the seventeen decidable
+# laws holds on it separately, then the conjunction `laws` holds. Proving the
+# real kernel's conjunction through this lemma, instead of evaluating it in one
+# go, keeps every proof within the fuel of the proven kernel (`--verdict`).
+law laws_of_parts:
+  for k: K.Kernel
+  for h1: {W.wellFormed(k) == True{} : Bool}
+  for h2: {D.frozenTransforms(k) == True{} : Bool}
+  for h3: {D.structuralIsTransform(k) == True{} : Bool}
+  for h4: {D.hybridDeclared(k) == True{} : Bool}
+  for h5: {D.authorNotCore(k) == True{} : Bool}
+  for h6: {D.hasSelfAndAuth(k) == True{} : Bool}
+  for h7: {D.capTokenPort(k) == True{} : Bool}
+  for h8: {D.twinOrigin(k) == True{} : Bool}
+  for h9: {D.hasActionGate(k) == True{} : Bool}
+  for h10: {D.partitionProposeNoInstall(k) == True{} : Bool}
+  for h11: {D.reindexNoSpec(k) == True{} : Bool}
+  for h12: {D.bindIntersectsTokens(k) == True{} : Bool}
+  for h13: {D.archiveKeepsLosers(k) == True{} : Bool}
+  for h14: {D.evalHidden(k) == True{} : Bool}
+  for h15: {D.cutClassify(k) == True{} : Bool}
+  for h16: {D.portRoutable(k) == True{} : Bool}
+  for h17: {D.auditNotGate(k) == True{} : Bool}
+  {D.laws(k) == True{} : Bool}
+
+# The real kernel satisfies all seventeen decidable laws at once. This is the
+# Bend counterpart of the static certificate `KernelIR.kernel_laws`.
+law kernel_laws:
+  {D.laws(R.kernel()) == True{} : Bool}

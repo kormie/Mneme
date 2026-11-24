@@ -117,6 +117,12 @@ demands the real run.
   src/lean-export.ts` from `spec/kernel.json` and committed;
   `test/judge.spec.ts` fails if the committed file drifts from the
   generator. Never edit it by hand.
+- `bend/KernelIR.bend` is the same projection written for the Bend
+  verification layer, by `cd helix && bun src/bend-export.ts`;
+  `test/bend-export.spec.ts` enforces byte parity. `bend PROOF.bend`
+  proves the seventeen laws over it (see `bend/README.md`). That is a
+  second check of the same IR, not a certificate: Lean's
+  `KernelIR.certificate` stays the artifact of record.
 - Every conjunct is `by decide`. `kernel_wellFormed` uses `decide
   +kernel` because `versioned` compares `String.Slice`s (v4.33.1
   `String.take`), which the elaborator cannot reduce but the trusted

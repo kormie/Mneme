@@ -1,5 +1,9 @@
 import Base
 import ./LAWS.bend as Laws
+import ./Kernel.bend as K
+import ./WellFormed.bend as W
+import ./Decidable.bend as D
+import ./KernelIR.bend as R
 
 def Laws.silent_install_red():
   {==}
@@ -468,3 +472,77 @@ def Laws.laws_fail_route():
 
 def Laws.laws_fail_audit():
   {==}
+
+def Laws.kernel_well_formed():
+  {==}
+
+def Laws.kernel_frozen_transforms():
+  {==}
+
+def Laws.kernel_structural_is_transform():
+  {==}
+
+def Laws.kernel_hybrid_declared():
+  {==}
+
+def Laws.kernel_author_not_core():
+  {==}
+
+def Laws.kernel_has_self_and_auth():
+  {==}
+
+def Laws.kernel_cap_token_port():
+  {==}
+
+def Laws.kernel_twin_origin():
+  {==}
+
+def Laws.kernel_has_action_gate():
+  {==}
+
+def Laws.kernel_partition_propose_no_install():
+  {==}
+
+def Laws.kernel_reindex_no_spec():
+  {==}
+
+def Laws.kernel_bind_intersects_tokens():
+  {==}
+
+def Laws.kernel_archive_keeps_losers():
+  {==}
+
+def Laws.kernel_eval_hidden():
+  {==}
+
+def Laws.kernel_cut_classify():
+  {==}
+
+def Laws.kernel_port_routable():
+  {==}
+
+def Laws.kernel_audit_not_gate():
+  {==}
+
+def Laws.laws_of_parts(k, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16, h17):
+  %Equal.sym(Bool, W.wellFormed(k), True{}, h1) : {_ && D.frozenTransforms(k) && D.structuralIsTransform(k) && D.hybridDeclared(k) && D.authorNotCore(k) && D.hasSelfAndAuth(k) && D.capTokenPort(k) && D.twinOrigin(k) && D.hasActionGate(k) && D.partitionProposeNoInstall(k) && D.reindexNoSpec(k) && D.bindIntersectsTokens(k) && D.archiveKeepsLosers(k) && D.evalHidden(k) && D.cutClassify(k) && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.frozenTransforms(k), True{}, h2) : {_ && D.structuralIsTransform(k) && D.hybridDeclared(k) && D.authorNotCore(k) && D.hasSelfAndAuth(k) && D.capTokenPort(k) && D.twinOrigin(k) && D.hasActionGate(k) && D.partitionProposeNoInstall(k) && D.reindexNoSpec(k) && D.bindIntersectsTokens(k) && D.archiveKeepsLosers(k) && D.evalHidden(k) && D.cutClassify(k) && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.structuralIsTransform(k), True{}, h3) : {_ && D.hybridDeclared(k) && D.authorNotCore(k) && D.hasSelfAndAuth(k) && D.capTokenPort(k) && D.twinOrigin(k) && D.hasActionGate(k) && D.partitionProposeNoInstall(k) && D.reindexNoSpec(k) && D.bindIntersectsTokens(k) && D.archiveKeepsLosers(k) && D.evalHidden(k) && D.cutClassify(k) && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.hybridDeclared(k), True{}, h4) : {_ && D.authorNotCore(k) && D.hasSelfAndAuth(k) && D.capTokenPort(k) && D.twinOrigin(k) && D.hasActionGate(k) && D.partitionProposeNoInstall(k) && D.reindexNoSpec(k) && D.bindIntersectsTokens(k) && D.archiveKeepsLosers(k) && D.evalHidden(k) && D.cutClassify(k) && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.authorNotCore(k), True{}, h5) : {_ && D.hasSelfAndAuth(k) && D.capTokenPort(k) && D.twinOrigin(k) && D.hasActionGate(k) && D.partitionProposeNoInstall(k) && D.reindexNoSpec(k) && D.bindIntersectsTokens(k) && D.archiveKeepsLosers(k) && D.evalHidden(k) && D.cutClassify(k) && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.hasSelfAndAuth(k), True{}, h6) : {_ && D.capTokenPort(k) && D.twinOrigin(k) && D.hasActionGate(k) && D.partitionProposeNoInstall(k) && D.reindexNoSpec(k) && D.bindIntersectsTokens(k) && D.archiveKeepsLosers(k) && D.evalHidden(k) && D.cutClassify(k) && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.capTokenPort(k), True{}, h7) : {_ && D.twinOrigin(k) && D.hasActionGate(k) && D.partitionProposeNoInstall(k) && D.reindexNoSpec(k) && D.bindIntersectsTokens(k) && D.archiveKeepsLosers(k) && D.evalHidden(k) && D.cutClassify(k) && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.twinOrigin(k), True{}, h8) : {_ && D.hasActionGate(k) && D.partitionProposeNoInstall(k) && D.reindexNoSpec(k) && D.bindIntersectsTokens(k) && D.archiveKeepsLosers(k) && D.evalHidden(k) && D.cutClassify(k) && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.hasActionGate(k), True{}, h9) : {_ && D.partitionProposeNoInstall(k) && D.reindexNoSpec(k) && D.bindIntersectsTokens(k) && D.archiveKeepsLosers(k) && D.evalHidden(k) && D.cutClassify(k) && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.partitionProposeNoInstall(k), True{}, h10) : {_ && D.reindexNoSpec(k) && D.bindIntersectsTokens(k) && D.archiveKeepsLosers(k) && D.evalHidden(k) && D.cutClassify(k) && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.reindexNoSpec(k), True{}, h11) : {_ && D.bindIntersectsTokens(k) && D.archiveKeepsLosers(k) && D.evalHidden(k) && D.cutClassify(k) && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.bindIntersectsTokens(k), True{}, h12) : {_ && D.archiveKeepsLosers(k) && D.evalHidden(k) && D.cutClassify(k) && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.archiveKeepsLosers(k), True{}, h13) : {_ && D.evalHidden(k) && D.cutClassify(k) && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.evalHidden(k), True{}, h14) : {_ && D.cutClassify(k) && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.cutClassify(k), True{}, h15) : {_ && D.portRoutable(k) && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.portRoutable(k), True{}, h16) : {_ && D.auditNotGate(k) == True{} : Bool}
+  %Equal.sym(Bool, D.auditNotGate(k), True{}, h17) : {_ == True{} : Bool}
+  {==}
+
+def Laws.kernel_laws():
+  Laws.laws_of_parts(R.kernel(), Laws.kernel_well_formed(), Laws.kernel_frozen_transforms(), Laws.kernel_structural_is_transform(), Laws.kernel_hybrid_declared(), Laws.kernel_author_not_core(), Laws.kernel_has_self_and_auth(), Laws.kernel_cap_token_port(), Laws.kernel_twin_origin(), Laws.kernel_has_action_gate(), Laws.kernel_partition_propose_no_install(), Laws.kernel_reindex_no_spec(), Laws.kernel_bind_intersects_tokens(), Laws.kernel_archive_keeps_losers(), Laws.kernel_eval_hidden(), Laws.kernel_cut_classify(), Laws.kernel_port_routable(), Laws.kernel_audit_not_gate())
