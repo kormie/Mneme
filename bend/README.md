@@ -40,10 +40,20 @@ add the new release's sha256s to the script (copy them from
   `bend/` ports it.
 - `helix/test/bend-export.spec.ts` keeps `KernelIR.bend` byte-identical to the
   generator's output.
+- The `differential` job (`cd helix && bun src/differential.ts`) is the
+  behavioural check. It builds a seeded corpus: kernels mutated from the real
+  one (plus kernels aimed at each law until that law fails) and event traces
+  (plus the five ADR-014 attacks). It then runs Lean (the pack's own `...B`
+  defs, through `lake env lean`), Bend, and the TypeScript mirrors on the same
+  inputs and fails if Bend or the mirrors disagree with Lean on any predicate.
+  `helix/test/differential.spec.ts` checks, without Lean or Bend, that the
+  corpus is deterministic and that every predicate is seen to pass and to fail.
 
-Coverage is not agreement: these checks show Bend states what Lean states, and
-that Bend's proofs hold, not that every Bend predicate computes exactly what
-its Lean twin does on every input. Lean stays the certificate of record.
+Coverage is not agreement, and agreement on a finite corpus is not a proof:
+the first three checks show Bend states what Lean states and that its proofs
+hold, and the differential job shows Bend and Lean answer alike on a few
+hundred generated inputs. Neither shows they agree on every input. Lean stays
+the certificate of record.
 
 ## Layout
 

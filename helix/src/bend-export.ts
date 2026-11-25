@@ -34,7 +34,7 @@ export const KERNEL_IR_BEND_PATH = resolve(HERE, "../../bend/KernelIR.bend");
  * anything else (control characters, quotes, backslashes, non-ASCII) rather
  * than guess at Bend's escaping rules.
  */
-function str(s: string): string {
+export function str(s: string): string {
   for (const ch of s) {
     const c = ch.codePointAt(0)!;
     if (c < 0x20 || c > 0x7e || ch === '"' || ch === "\\") {
@@ -44,7 +44,7 @@ function str(s: string): string {
   return `"${s}"`;
 }
 
-function strList(xs: string[]): string {
+export function strList(xs: string[]): string {
   return `[${xs.map(str).join(", ")}]`;
 }
 
@@ -56,17 +56,17 @@ export function graphDefName(id: string): string {
   return `graph_${id.replace(/-/g, "_")}`;
 }
 
-function port(p: LeanPort): string {
+export function port(p: LeanPort): string {
   return `K.Port{${str(p.name)}, ${str(p.type)}, ${p.dir === "in" ? "K.DirIn{}" : "K.DirOut{}"}}`;
 }
 
-function node(n: LeanNode): string {
+export function node(n: LeanNode): string {
   const kind = n.kind === "prompt" ? "K.Prompt{}" : "K.Transform{}";
   const ports = n.ports.length === 0 ? "[]" : `[${n.ports.map(port).join(", ")}]`;
   return `K.Node{${str(n.id)}, ${kind}, ${ports}}`;
 }
 
-function edge(e: LeanEdge): string {
+export function edge(e: LeanEdge): string {
   const kind = e.kind === "data" ? "K.DataEdge{}" : "K.ControlEdge{}";
   const cyclic = e.cyclic ? "True{}" : "False{}";
   return `K.Edge{${str(e.id)}, ${str(e.from)}, ${str(e.to)}, ${str(e.fromPort)}, ${str(e.toPort)}, ${kind}, ${cyclic}, ${str(e.guard)}}`;
