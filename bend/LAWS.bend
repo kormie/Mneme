@@ -2,6 +2,7 @@ import Base
 import ./Kernel.bend as K
 import ./Trace.bend as T
 import ./WellFormed.bend as W
+import ./Decidable.bend as D
 import ./Negatives.bend as N
 import ./Fixtures.bend as F
 
@@ -231,3 +232,111 @@ law nodup_distinct_green:
 
 law nodup_repeat_red:
   {W.nodup(["a", "b", "a"]) == False{} : Bool}
+
+# --- INV-G2-KIND-SPLIT (Laws.FrozenTransforms): frozen ids name transform nodes ---
+
+law frozen_transform_green:
+  {D.frozenTransforms(F.kernelFrozen([F.graphOf("pg-dem", [F.xform("validate")])], ["validate"])) == True{} : Bool}
+
+law frozen_nothing_green:
+  {D.frozenTransforms(F.kernelFrozen([], [])) == True{} : Bool}
+
+law frozen_found_in_later_graph_green:
+  {D.frozenTransforms(F.kernelFrozen([F.graphOf("pg-a", [F.xform("a")]), F.graphOf("pg-b", [F.xform("b")])], ["b"])) == True{} : Bool}
+
+law frozen_prompt_red:
+  {D.frozenTransforms(F.kernelFrozen([F.graphOf("pg-dem", [F.prompt("validate")])], ["validate"])) == False{} : Bool}
+
+law frozen_missing_red:
+  {D.frozenTransforms(F.kernelFrozen([F.graphOf("pg-dem", [F.xform("validate")])], ["holdout"])) == False{} : Bool}
+
+# --- INV-STRUCTURAL-NO-MODEL (Laws.StructuralIsTransform) ---
+
+law structural_transform_green:
+  {D.structuralIsTransform(F.kernelG([F.graphOf("pg-w2l", [F.xform("structural")])])) == True{} : Bool}
+
+law structural_prompt_red:
+  {D.structuralIsTransform(F.kernelG([F.graphOf("pg-w2l", [F.prompt("structural")])])) == False{} : Bool}
+
+law structural_absent_red:
+  {D.structuralIsTransform(F.kernelG([F.graphOf("pg-w2l", [F.xform("other")])])) == False{} : Bool}
+
+law structural_wrong_graph_red:
+  {D.structuralIsTransform(F.kernelG([F.graphOf("pg-dem", [F.xform("structural")])])) == False{} : Bool}
+
+# --- INV-HYBRID-DECLARED (Laws.HybridDeclared) ---
+
+law hybrid_green:
+  {D.hybridDeclared(F.kernelG([F.graphOf("pg-w2l", F.hybridNodes())])) == True{} : Bool}
+
+law hybrid_missing_commit_red:
+  {D.hybridDeclared(F.kernelG([F.graphOf("pg-w2l", [F.xform("semantic"), F.xform("skill"), F.xform("structural"), F.xform("hybrid"), F.xform("align")])])) == False{} : Bool}
+
+law hybrid_no_graph_red:
+  {D.hybridDeclared(F.kernelG([])) == False{} : Bool}
+
+law hybrid_wrong_graph_red:
+  {D.hybridDeclared(F.kernelG([F.graphOf("pg-dem", F.hybridNodes())])) == False{} : Bool}
+
+# --- INV-CORE-NOT-DARWINIAN (Laws.AuthorNotCore) ---
+
+law author_green:
+  {D.authorNotCore(F.kernelG([F.graphOf("pg-dem", [F.nodeWith("author", K.Prompt{}, [F.portOut("TwinSpec")])])])) == True{} : Bool}
+
+law author_emits_identity_red:
+  {D.authorNotCore(F.kernelG([F.graphOf("pg-dem", [F.nodeWith("author", K.Prompt{}, [F.portOut("IdentitySnapshot")])])])) == False{} : Bool}
+
+law author_emits_inclusion_red:
+  {D.authorNotCore(F.kernelG([F.graphOf("pg-dem", [F.nodeWith("author", K.Prompt{}, [F.portOut("TwinSpec"), F.portOut("InclusionReport")])])])) == False{} : Bool}
+
+# Only OUT ports count: reading an IdentitySnapshot is fine.
+law author_reads_identity_green:
+  {D.authorNotCore(F.kernelG([F.graphOf("pg-dem", [F.nodeWith("author", K.Prompt{}, [F.portIn("IdentitySnapshot"), F.portOut("TwinSpec")])])])) == True{} : Bool}
+
+law author_absent_red:
+  {D.authorNotCore(F.kernelG([F.graphOf("pg-dem", [F.xform("other")])])) == False{} : Bool}
+
+# --- INV-TWINS-NEVER-WRITE-CORE (Laws.HasSelfAndAuth) ---
+
+law self_and_auth_green:
+  {D.hasSelfAndAuth(F.kernelG([F.graphOf("pg-core", [F.xform("self-upd"), F.xform("twin-auth")])])) == True{} : Bool}
+
+law self_and_auth_missing_auth_red:
+  {D.hasSelfAndAuth(F.kernelG([F.graphOf("pg-core", [F.xform("self-upd")])])) == False{} : Bool}
+
+law self_and_auth_wrong_graph_red:
+  {D.hasSelfAndAuth(F.kernelG([F.graphOf("pg-twin", [F.xform("self-upd"), F.xform("twin-auth")])])) == False{} : Bool}
+
+# --- INV-CAP-TOKENS (Laws.CapTokenPort) ---
+
+law cap_token_port_green:
+  {D.capTokenPort(F.kernelG([F.graphOf("pg-core", [F.nodeWith("twin-auth", K.Prompt{}, [F.portOut("CapToken")])])])) == True{} : Bool}
+
+law cap_token_port_any_direction_green:
+  {D.capTokenPort(F.kernelG([F.graphOf("pg-core", [F.nodeWith("twin-auth", K.Prompt{}, [F.portIn("CapToken")])])])) == True{} : Bool}
+
+law cap_token_port_absent_red:
+  {D.capTokenPort(F.kernelG([F.graphOf("pg-core", [F.nodeWith("twin-auth", K.Prompt{}, [F.portOut("TwinSpec")])])])) == False{} : Bool}
+
+# The type must match exactly: `CapToken[]` is a different type.
+law cap_token_array_is_not_cap_token_red:
+  {D.capTokenPort(F.kernelG([F.graphOf("pg-core", [F.nodeWith("twin-auth", K.Prompt{}, [F.portOut("CapToken[]")])])])) == False{} : Bool}
+
+# --- INV-SEEDS-NOT-ONTOLOGY (Laws.TwinOrigin) ---
+
+law twin_origin_green:
+  {D.twinOrigin(F.kernelTwins([K.Twin{"demo-soma", K.Seed{}}])) == True{} : Bool}
+
+law twin_origin_empty_red:
+  {D.twinOrigin(F.kernelTwins([])) == False{} : Bool}
+
+# --- INV-ACTION-GATE (Laws.HasActionGate) ---
+
+law action_gate_green:
+  {D.hasActionGate(F.kernelG([F.graphOf("pg-twin", [F.xform("action-gate"), F.xform("core-bind")])])) == True{} : Bool}
+
+law action_gate_missing_bind_red:
+  {D.hasActionGate(F.kernelG([F.graphOf("pg-twin", [F.xform("action-gate")])])) == False{} : Bool}
+
+law action_gate_wrong_graph_red:
+  {D.hasActionGate(F.kernelG([F.graphOf("pg-core", [F.xform("action-gate"), F.xform("core-bind")])])) == False{} : Bool}
