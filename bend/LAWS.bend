@@ -340,3 +340,292 @@ law action_gate_missing_bind_red:
 
 law action_gate_wrong_graph_red:
   {D.hasActionGate(F.kernelG([F.graphOf("pg-core", [F.xform("action-gate"), F.xform("core-bind")])])) == False{} : Bool}
+
+# --- INV-PARTITION-NOT-INSTALL (Laws.PartitionProposeNoInstall) ---
+
+# A partition proposer that emits a TwinSpec, has no install port, never feeds
+# reindex, and records lineage is accepted.
+law partition_propose_green:
+  {D.partitionProposeNoInstall(F.kernelG([F.adlGood()])) == True{} : Bool}
+
+# A proposer that also emits a DomainAck can install a twin by itself, so it is rejected.
+law partition_propose_emits_ack_red:
+  {D.partitionProposeNoInstall(F.kernelG([F.graphE("pg-adl", [F.nodeWith("partition-propose", K.Prompt{}, [F.portOut("TwinSpec"), F.portOut("DomainAck")]), F.xform("lineage-record")], [F.edgeOf("a1", "partition-propose", "lineage-record")])])) == False{} : Bool}
+
+# A proposer with a port named "install" is rejected, whatever that port's type is.
+law partition_propose_install_port_red:
+  {D.partitionProposeNoInstall(F.kernelG([F.graphE("pg-adl", [F.nodeWith("partition-propose", K.Prompt{}, [F.portOut("TwinSpec"), F.portNamed("install", "Flag", K.DirIn{})]), F.xform("lineage-record")], [F.edgeOf("a1", "partition-propose", "lineage-record")])])) == False{} : Bool}
+
+# A wire straight from the proposer to reindex skips the steward, so it is rejected.
+law partition_propose_to_reindex_red:
+  {D.partitionProposeNoInstall(F.kernelG([F.graphE("pg-adl", [F.nodeWith("partition-propose", K.Prompt{}, [F.portOut("TwinSpec")]), F.xform("lineage-record"), F.xform("reindex")], [F.edgeOf("a1", "partition-propose", "lineage-record"), F.edgeOf("a2", "partition-propose", "reindex")])])) == False{} : Bool}
+
+# The graph must declare a lineage-record node; an edge alone is not enough.
+law partition_propose_no_lineage_node_red:
+  {D.partitionProposeNoInstall(F.kernelG([F.graphE("pg-adl", [F.nodeWith("partition-propose", K.Prompt{}, [F.portOut("TwinSpec")])], [F.edgeOf("a1", "partition-propose", "lineage-record")])])) == False{} : Bool}
+
+# The proposer must actually be wired to lineage-record; the node alone is not enough.
+law partition_propose_no_lineage_edge_red:
+  {D.partitionProposeNoInstall(F.kernelG([F.graphE("pg-adl", [F.nodeWith("partition-propose", K.Prompt{}, [F.portOut("TwinSpec")]), F.xform("lineage-record")], [])])) == False{} : Bool}
+
+# A proposer that does not emit a TwinSpec has nothing to propose, so it is rejected.
+law partition_propose_no_twinspec_red:
+  {D.partitionProposeNoInstall(F.kernelG([F.graphE("pg-adl", [F.nodeWith("partition-propose", K.Prompt{}, [F.portOut("Other")]), F.xform("lineage-record")], [F.edgeOf("a1", "partition-propose", "lineage-record")])])) == False{} : Bool}
+
+# --- INV-REINDEX-NO-SPEC (Laws.ReindexNoSpec) ---
+
+# A reindex node with no TwinSpec port is accepted.
+law reindex_no_spec_green:
+  {D.reindexNoSpec(F.kernelG([F.graphOf("pg-adl", [F.nodeWith("reindex", K.Transform{}, [F.portIn("Index")])])])) == True{} : Bool}
+
+# Reindex may not touch a TwinSpec in either direction, so an input port of that type is rejected.
+law reindex_reads_spec_red:
+  {D.reindexNoSpec(F.kernelG([F.graphOf("pg-adl", [F.nodeWith("reindex", K.Transform{}, [F.portIn("TwinSpec")])])])) == False{} : Bool}
+
+# A kernel with no reindex node is rejected, because the law cannot be checked.
+law reindex_absent_red:
+  {D.reindexNoSpec(F.kernelG([F.graphOf("pg-adl", [F.xform("other")])])) == False{} : Bool}
+
+# --- INV-CAP-TOKENS, binding half (Laws.BindIntersectsTokens) ---
+
+# core-bind that receives a CapToken[] and emits no tokens is accepted.
+law bind_consumes_tokens_green:
+  {D.bindIntersectsTokens(F.kernelG([F.graphOf("pg-twin", [F.nodeWith("core-bind", K.Prompt{}, [F.portIn("CapToken[]")])])])) == True{} : Bool}
+
+# core-bind that never receives a CapToken[] has nothing to intersect, so it is rejected.
+law bind_no_token_input_red:
+  {D.bindIntersectsTokens(F.kernelG([F.graphOf("pg-twin", [F.nodeWith("core-bind", K.Prompt{}, [F.portIn("Other")])])])) == False{} : Bool}
+
+# core-bind may not emit a CapToken[]: binding narrows tokens, it never mints them.
+law bind_emits_token_array_red:
+  {D.bindIntersectsTokens(F.kernelG([F.graphOf("pg-twin", [F.nodeWith("core-bind", K.Prompt{}, [F.portIn("CapToken[]"), F.portOut("CapToken[]")])])])) == False{} : Bool}
+
+# core-bind may not emit a single CapToken either.
+law bind_emits_single_token_red:
+  {D.bindIntersectsTokens(F.kernelG([F.graphOf("pg-twin", [F.nodeWith("core-bind", K.Prompt{}, [F.portIn("CapToken[]"), F.portOut("CapToken")])])])) == False{} : Bool}
+
+# Emitting something that is not a token is fine.
+law bind_emits_other_green:
+  {D.bindIntersectsTokens(F.kernelG([F.graphOf("pg-twin", [F.nodeWith("core-bind", K.Prompt{}, [F.portIn("CapToken[]"), F.portOut("Decision")])])])) == True{} : Bool}
+
+# A kernel with no core-bind node is rejected.
+law bind_absent_red:
+  {D.bindIntersectsTokens(F.kernelG([F.graphOf("pg-twin", [F.xform("other")])])) == False{} : Bool}
+
+# --- INV-ARCHIVE-KEEPS-LOSERS (Laws.ArchiveKeepsLosers) ---
+
+# register emits a LineageArchive and archive is a transform, so losing lineages are kept.
+law archive_keeps_losers_green:
+  {D.archiveKeepsLosers(F.kernelG([F.demGood()])) == True{} : Bool}
+
+# If archive is a prompt, a model could decide what to drop, so it is rejected.
+law archive_prompt_red:
+  {D.archiveKeepsLosers(F.kernelG([F.graphOf("pg-dem", [F.nodeWith("register", K.Prompt{}, [F.portOut("LineageArchive")]), F.prompt("archive")])])) == False{} : Bool}
+
+# register must emit a LineageArchive.
+law register_no_archive_red:
+  {D.archiveKeepsLosers(F.kernelG([F.graphOf("pg-dem", [F.nodeWith("register", K.Prompt{}, [F.portOut("Other")]), F.xform("archive")])])) == False{} : Bool}
+
+# Only an OUTPUT of type LineageArchive counts; reading one does not.
+law register_reads_archive_red:
+  {D.archiveKeepsLosers(F.kernelG([F.graphOf("pg-dem", [F.nodeWith("register", K.Prompt{}, [F.portIn("LineageArchive")]), F.xform("archive")])])) == False{} : Bool}
+
+# A kernel with no archive node is rejected.
+law archive_absent_red:
+  {D.archiveKeepsLosers(F.kernelG([F.graphOf("pg-dem", [F.nodeWith("register", K.Prompt{}, [F.portOut("LineageArchive")])])])) == False{} : Bool}
+
+# --- INV-EVAL-HIDDEN (Laws.EvalHidden) ---
+
+# validate (in pg-dem) and holdout (in pg-adl) are both transforms, so no model can see the evaluation.
+law eval_hidden_green:
+  {D.evalHidden(F.kernelG([F.graphOf("pg-dem", [F.xform("validate")]), F.graphOf("pg-adl", [F.xform("holdout")])])) == True{} : Bool}
+
+# A validate node that is a prompt is rejected.
+law eval_validate_prompt_red:
+  {D.evalHidden(F.kernelG([F.graphOf("pg-dem", [F.prompt("validate")]), F.graphOf("pg-adl", [F.xform("holdout")])])) == False{} : Bool}
+
+# A holdout node that is a prompt is rejected.
+law eval_holdout_prompt_red:
+  {D.evalHidden(F.kernelG([F.graphOf("pg-dem", [F.xform("validate")]), F.graphOf("pg-adl", [F.prompt("holdout")])])) == False{} : Bool}
+
+# Both nodes must be declared; a kernel with no holdout is rejected.
+law eval_holdout_absent_red:
+  {D.evalHidden(F.kernelG([F.graphOf("pg-dem", [F.xform("validate")])])) == False{} : Bool}
+
+# holdout must live in pg-adl; the same node in the wrong graph does not count.
+law eval_holdout_wrong_graph_red:
+  {D.evalHidden(F.kernelG([F.graphOf("pg-dem", [F.xform("validate"), F.xform("holdout")])])) == False{} : Bool}
+
+# --- INV-CUT-CLASSIFY (Laws.CutClassify) ---
+
+# cut-class and cluster (in pg-adl) are both transforms, so partitioning is mechanical.
+law cut_classify_green:
+  {D.cutClassify(F.kernelG([F.graphOf("pg-adl", [F.xform("cut-class"), F.xform("cluster")])])) == True{} : Bool}
+
+# A cut-class node that is a prompt is rejected.
+law cut_class_prompt_red:
+  {D.cutClassify(F.kernelG([F.graphOf("pg-adl", [F.prompt("cut-class"), F.xform("cluster")])])) == False{} : Bool}
+
+# A cluster node that is a prompt is rejected.
+law cluster_prompt_red:
+  {D.cutClassify(F.kernelG([F.graphOf("pg-adl", [F.xform("cut-class"), F.prompt("cluster")])])) == False{} : Bool}
+
+# Both nodes must be declared; a kernel with no cluster is rejected.
+law cluster_absent_red:
+  {D.cutClassify(F.kernelG([F.graphOf("pg-adl", [F.xform("cut-class")])])) == False{} : Bool}
+
+# --- INV-PORT-ROUTABLE (Laws.PortRoutable) ---
+
+# A data edge that names both ports needs no guard and is accepted.
+law data_edge_routable_green:
+  {D.portRoutable(F.kernelG([F.graphE("pg-x", [], [F.edgePorts("out", "in", K.DataEdge{}, "")])])) == True{} : Bool}
+
+# A control edge that names both ports and carries a guard is accepted.
+law control_edge_guarded_green:
+  {D.portRoutable(F.kernelG([F.graphE("pg-x", [], [F.edgePorts("out", "in", K.ControlEdge{}, "score >= tau")])])) == True{} : Bool}
+
+# A control edge with no guard is rejected: a scheduler could not decide when to fire it.
+law control_edge_unguarded_red:
+  {D.portRoutable(F.kernelG([F.graphE("pg-x", [], [F.edgePorts("out", "in", K.ControlEdge{}, "")])])) == False{} : Bool}
+
+# An edge with no source port name is rejected, because the scheduler cannot route from it.
+law edge_no_from_port_red:
+  {D.portRoutable(F.kernelG([F.graphE("pg-x", [], [F.edgePorts("", "in", K.DataEdge{}, "")])])) == False{} : Bool}
+
+# An edge with no target port name is rejected for the same reason.
+law edge_no_to_port_red:
+  {D.portRoutable(F.kernelG([F.graphE("pg-x", [], [F.edgePorts("out", "", K.DataEdge{}, "")])])) == False{} : Bool}
+
+# A kernel with no edges has nothing to route, so it passes trivially.
+law no_edges_routable_green:
+  {D.portRoutable(F.kernelG([])) == True{} : Bool}
+
+# One bad edge among good ones sinks the whole kernel.
+law one_bad_edge_red:
+  {D.portRoutable(F.kernelG([F.graphE("pg-x", [], [F.edgePorts("out", "in", K.DataEdge{}, ""), F.edgePorts("", "in", K.DataEdge{}, "")])])) == False{} : Bool}
+
+# --- INV-AUDIT-NOT-GATE (Laws.AuditNotGate) ---
+
+# Audit heuristics and sample-clean are transforms, and nothing in pg-audit
+# emits a permit, effect, twin id, store, LTM or archive, so audit is only advice.
+law audit_not_gate_green:
+  {D.auditNotGate(F.kernelG([F.auditGood()])) == True{} : Bool}
+
+# An audit node that emits a Permit could grant authority, so it is rejected.
+law audit_emits_permit_red:
+  {D.auditNotGate(F.kernelG([F.graphOf("pg-audit", [F.xform("audit-heuristics"), F.xform("sample-clean"), F.nodeWith("report", K.Prompt{}, [F.portOut("Permit")])])])) == False{} : Bool}
+
+# An audit node that emits an ExternalEffect could act on the world, so it is rejected.
+law audit_emits_effect_red:
+  {D.auditNotGate(F.kernelG([F.graphOf("pg-audit", [F.xform("audit-heuristics"), F.xform("sample-clean"), F.nodeWith("report", K.Prompt{}, [F.portOut("ExternalEffect")])])])) == False{} : Bool}
+
+# An audit node that emits a TwinId could install a twin, so it is rejected.
+law audit_emits_twin_id_red:
+  {D.auditNotGate(F.kernelG([F.graphOf("pg-audit", [F.xform("audit-heuristics"), F.xform("sample-clean"), F.nodeWith("report", K.Prompt{}, [F.portOut("TwinId")])])])) == False{} : Bool}
+
+# An audit node that emits a CoreStore could write Core, so it is rejected.
+law audit_emits_core_store_red:
+  {D.auditNotGate(F.kernelG([F.graphOf("pg-audit", [F.xform("audit-heuristics"), F.xform("sample-clean"), F.nodeWith("report", K.Prompt{}, [F.portOut("CoreStore")])])])) == False{} : Bool}
+
+# An audit node that emits LTM could write long-term memory, so it is rejected.
+law audit_emits_ltm_red:
+  {D.auditNotGate(F.kernelG([F.graphOf("pg-audit", [F.xform("audit-heuristics"), F.xform("sample-clean"), F.nodeWith("report", K.Prompt{}, [F.portOut("LTM")])])])) == False{} : Bool}
+
+# An audit node that emits a LineageArchive could rewrite lineage, so it is rejected.
+law audit_emits_archive_red:
+  {D.auditNotGate(F.kernelG([F.graphOf("pg-audit", [F.xform("audit-heuristics"), F.xform("sample-clean"), F.nodeWith("report", K.Prompt{}, [F.portOut("LineageArchive")])])])) == False{} : Bool}
+
+# Only OUTPUTS matter: an audit node that reads a Permit is fine.
+law audit_reads_permit_green:
+  {D.auditNotGate(F.kernelG([F.graphOf("pg-audit", [F.xform("audit-heuristics"), F.xform("sample-clean"), F.nodeWith("report", K.Prompt{}, [F.portIn("Permit")])])])) == True{} : Bool}
+
+# audit-heuristics must be a transform, not a model.
+law audit_heuristics_prompt_red:
+  {D.auditNotGate(F.kernelG([F.graphOf("pg-audit", [F.prompt("audit-heuristics"), F.xform("sample-clean")])])) == False{} : Bool}
+
+# sample-clean must be a transform too: a model that picks which clean prompts
+# the steward sees would defeat the audit.
+law audit_sample_clean_prompt_red:
+  {D.auditNotGate(F.kernelG([F.graphOf("pg-audit", [F.xform("audit-heuristics"), F.prompt("sample-clean")])])) == False{} : Bool}
+
+# sample-clean must be declared; a kernel without it is rejected.
+law audit_sample_clean_absent_red:
+  {D.auditNotGate(F.kernelG([F.graphOf("pg-audit", [F.xform("audit-heuristics")])])) == False{} : Bool}
+
+# --- The static certificate: the conjunction of every decidable law (Laws.Laws) ---
+
+# A kernel that satisfies all seventeen decidable laws passes the conjunction.
+law laws_kernel_green:
+  {D.laws(F.lawsKernel()) == True{} : Bool}
+
+# Each of the next seventeen laws takes that lawful kernel, breaks exactly one
+# conjunct, and checks the whole conjunction turns red. Together they show that
+# `laws` really requires every one of its seventeen parts.
+
+# Breaking well-formedness (a missing core layer) fails the conjunction.
+law laws_fail_well_formed:
+  {D.laws(F.faultWellFormed()) == False{} : Bool}
+
+# Freezing an id that names no transform node fails the conjunction.
+law laws_fail_frozen:
+  {D.laws(F.faultFrozen()) == False{} : Bool}
+
+# Making `structural` a prompt fails the conjunction.
+law laws_fail_structural:
+  {D.laws(F.faultStructural()) == False{} : Bool}
+
+# Dropping the `commit` node from pg-w2l fails the conjunction.
+law laws_fail_hybrid:
+  {D.laws(F.faultHybrid()) == False{} : Bool}
+
+# Letting the graph author emit an IdentitySnapshot fails the conjunction.
+law laws_fail_author:
+  {D.laws(F.faultAuthor()) == False{} : Bool}
+
+# Dropping self-upd from pg-core fails the conjunction.
+law laws_fail_self_and_auth:
+  {D.laws(F.faultSelfAuth()) == False{} : Bool}
+
+# Removing the CapToken port from twin-auth fails the conjunction.
+law laws_fail_cap_token:
+  {D.laws(F.faultCapToken()) == False{} : Bool}
+
+# Declaring no twins fails the conjunction.
+law laws_fail_twin_origin:
+  {D.laws(F.faultTwinOrigin()) == False{} : Bool}
+
+# Dropping action-gate from pg-twin fails the conjunction.
+law laws_fail_action_gate:
+  {D.laws(F.faultActionGate()) == False{} : Bool}
+
+# Removing the proposer's wire to lineage-record fails the conjunction.
+law laws_fail_partition:
+  {D.laws(F.faultPartition()) == False{} : Bool}
+
+# Giving reindex a TwinSpec port fails the conjunction.
+law laws_fail_reindex:
+  {D.laws(F.faultReindex()) == False{} : Bool}
+
+# Letting core-bind emit a CapToken[] fails the conjunction.
+law laws_fail_bind:
+  {D.laws(F.faultBind()) == False{} : Bool}
+
+# Making archive a prompt fails the conjunction.
+law laws_fail_archive:
+  {D.laws(F.faultArchive()) == False{} : Bool}
+
+# Making validate a prompt fails the conjunction.
+law laws_fail_eval:
+  {D.laws(F.faultEval()) == False{} : Bool}
+
+# Making cluster a prompt fails the conjunction.
+law laws_fail_cut:
+  {D.laws(F.faultCut()) == False{} : Bool}
+
+# An edge with no source port name fails the conjunction.
+law laws_fail_route:
+  {D.laws(F.faultRoute()) == False{} : Bool}
+
+# Letting an audit node emit a Permit fails the conjunction.
+law laws_fail_audit:
+  {D.laws(F.faultAudit()) == False{} : Bool}

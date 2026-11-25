@@ -177,3 +177,24 @@ def graphNodes(+g: Graph) -> List<&2, Node>:
   match g:
     case Graph{_, nodes, _, _}:
       nodes
+
+# Lean: `n.ports.any (·.name == name)`.
+def portsHaveName(+ps: List<&2, Port>, +name: String) -> Bool:
+  match ps:
+    case Nil{}:
+      False{}
+    case Con{Port{pname, _, _}, t}:
+      (String.eq(pname, name) || portsHaveName(t, name))
+
+def graphEdges(+g: Graph) -> List<&2, Edge>:
+  match g:
+    case Graph{_, _, edges, _}:
+      edges
+
+# Lean: `g.edges.any (fun e => e.from == a && e.to == b)`.
+def edgesAnyFromTo(+edges: List<&2, Edge>, +a: String, +b: String) -> Bool:
+  match edges:
+    case Nil{}:
+      False{}
+    case Con{Edge{_, src, dst, _, _, _, _, _}, t}:
+      ((String.eq(src, a) && String.eq(dst, b)) || edgesAnyFromTo(t, a, b))

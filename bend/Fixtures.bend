@@ -109,3 +109,178 @@ def kernelTwins(twins: List<&2, K.Twin>) -> K.Kernel:
 
 def hybridNodes() -> List<&2, K.Node>:
   [xform("semantic"), xform("skill"), xform("structural"), xform("hybrid"), xform("align"), xform("commit")]
+
+# --- Part 2 builders: edges with ports, named ports, and a kernel that
+# satisfies every decidable law (so the conjunction has a green control). ---
+
+def portNamed(name: String, ty: String, dir: K.Dir) -> K.Port:
+  K.Port{name, ty, dir}
+
+def edgeOf(id: String, src: String, dst: String) -> K.Edge:
+  K.Edge{id, src, dst, "out", "in", K.DataEdge{}, False{}, ""}
+
+def edgePorts(fromPort: String, toPort: String, kind: K.EdgeKind, guard: String) -> K.Edge:
+  K.Edge{"e", "a", "b", fromPort, toPort, kind, False{}, guard}
+
+def graphE(id: String, nodes: List<&2, K.Node>, edges: List<&2, K.Edge>) -> K.Graph:
+  K.Graph{id, nodes, edges, "mneme.graph/1"}
+
+def adlGood() -> K.Graph:
+  graphE(
+    "pg-adl",
+    [
+      nodeWith("partition-propose", K.Prompt{}, [portOut("TwinSpec")]),
+      xform("lineage-record"),
+      xform("reindex"),
+      xform("holdout"),
+      xform("cut-class"),
+      xform("cluster")
+    ],
+    [edgeOf("a1", "partition-propose", "lineage-record")]
+  )
+
+def demGood() -> K.Graph:
+  graphOf(
+    "pg-dem",
+    [
+      nodeWith("author", K.Prompt{}, [portOut("TwinSpec")]),
+      xform("validate"),
+      nodeWith("register", K.Prompt{}, [portOut("LineageArchive")]),
+      xform("archive")
+    ]
+  )
+
+def coreGood() -> K.Graph:
+  graphOf("pg-core", [xform("self-upd"), nodeWith("twin-auth", K.Prompt{}, [portOut("CapToken")])])
+
+def twinGood() -> K.Graph:
+  graphOf("pg-twin", [xform("action-gate"), nodeWith("core-bind", K.Prompt{}, [portIn("CapToken[]")])])
+
+def auditGood() -> K.Graph:
+  graphOf("pg-audit", [xform("audit-heuristics"), xform("sample-clean"), nodeWith("report", K.Prompt{}, [portOut("Report")])])
+
+def w2lGood() -> K.Graph:
+  graphOf("pg-w2l", hybridNodes())
+
+# Frozen ids are "align": a transform nothing else in the laws mentions, so a
+# fault elsewhere cannot also trip `frozenTransforms`.
+def lawsKernelFull(
+  layers: List<&2, K.Layer>, w2l: K.Graph, dem: K.Graph, adl: K.Graph, core: K.Graph,
+  twin: K.Graph, audit: K.Graph, twins: List<&2, K.Twin>, frozen: List<&2, String>
+) -> K.Kernel:
+  K.Kernel{"mneme.spec/0.10", layers, [w2l, dem, adl, core, twin, audit], twins, frozen}
+
+def seedTwins() -> List<&2, K.Twin>:
+  [K.Twin{"demo-soma", K.Seed{}}]
+
+def lawsKernel() -> K.Kernel:
+  lawsKernelFull(fullLayers(), w2lGood(), demGood(), adlGood(), coreGood(), twinGood(), auditGood(), seedTwins(), ["align"])
+
+# --- Single-fault variants of `lawsKernel`: each breaks exactly one conjunct. ---
+
+def faultWellFormed() -> K.Kernel:
+  lawsKernelFull(noCoreLayers(), w2lGood(), demGood(), adlGood(), coreGood(), twinGood(), auditGood(), seedTwins(), ["align"])
+
+def faultFrozen() -> K.Kernel:
+  lawsKernelFull(fullLayers(), w2lGood(), demGood(), adlGood(), coreGood(), twinGood(), auditGood(), seedTwins(), ["nope"])
+
+def faultStructural() -> K.Kernel:
+  lawsKernelFull(
+    fullLayers(),
+    graphOf("pg-w2l", [xform("semantic"), xform("skill"), prompt("structural"), xform("hybrid"), xform("align"), xform("commit")]),
+    demGood(), adlGood(), coreGood(), twinGood(), auditGood(), seedTwins(), ["align"]
+  )
+
+def faultHybrid() -> K.Kernel:
+  lawsKernelFull(
+    fullLayers(),
+    graphOf("pg-w2l", [xform("semantic"), xform("skill"), xform("structural"), xform("hybrid"), xform("align")]),
+    demGood(), adlGood(), coreGood(), twinGood(), auditGood(), seedTwins(), ["align"]
+  )
+
+def faultAuthor() -> K.Kernel:
+  lawsKernelFull(
+    fullLayers(), w2lGood(),
+    graphOf("pg-dem", [nodeWith("author", K.Prompt{}, [portOut("IdentitySnapshot")]), xform("validate"), nodeWith("register", K.Prompt{}, [portOut("LineageArchive")]), xform("archive")]),
+    adlGood(), coreGood(), twinGood(), auditGood(), seedTwins(), ["align"]
+  )
+
+def faultSelfAuth() -> K.Kernel:
+  lawsKernelFull(
+    fullLayers(), w2lGood(), demGood(), adlGood(),
+    graphOf("pg-core", [nodeWith("twin-auth", K.Prompt{}, [portOut("CapToken")])]),
+    twinGood(), auditGood(), seedTwins(), ["align"]
+  )
+
+def faultCapToken() -> K.Kernel:
+  lawsKernelFull(
+    fullLayers(), w2lGood(), demGood(), adlGood(),
+    graphOf("pg-core", [xform("self-upd"), nodeWith("twin-auth", K.Prompt{}, [portOut("Decision")])]),
+    twinGood(), auditGood(), seedTwins(), ["align"]
+  )
+
+def faultTwinOrigin() -> K.Kernel:
+  lawsKernelFull(fullLayers(), w2lGood(), demGood(), adlGood(), coreGood(), twinGood(), auditGood(), [], ["align"])
+
+def faultActionGate() -> K.Kernel:
+  lawsKernelFull(
+    fullLayers(), w2lGood(), demGood(), adlGood(), coreGood(),
+    graphOf("pg-twin", [nodeWith("core-bind", K.Prompt{}, [portIn("CapToken[]")])]),
+    auditGood(), seedTwins(), ["align"]
+  )
+
+def faultPartition() -> K.Kernel:
+  lawsKernelFull(
+    fullLayers(), w2lGood(), demGood(),
+    graphE("pg-adl", [nodeWith("partition-propose", K.Prompt{}, [portOut("TwinSpec")]), xform("lineage-record"), xform("reindex"), xform("holdout"), xform("cut-class"), xform("cluster")], []),
+    coreGood(), twinGood(), auditGood(), seedTwins(), ["align"]
+  )
+
+def faultReindex() -> K.Kernel:
+  lawsKernelFull(
+    fullLayers(), w2lGood(), demGood(),
+    graphE("pg-adl", [nodeWith("partition-propose", K.Prompt{}, [portOut("TwinSpec")]), xform("lineage-record"), nodeWith("reindex", K.Transform{}, [portIn("TwinSpec")]), xform("holdout"), xform("cut-class"), xform("cluster")], [edgeOf("a1", "partition-propose", "lineage-record")]),
+    coreGood(), twinGood(), auditGood(), seedTwins(), ["align"]
+  )
+
+def faultBind() -> K.Kernel:
+  lawsKernelFull(
+    fullLayers(), w2lGood(), demGood(), adlGood(), coreGood(),
+    graphOf("pg-twin", [xform("action-gate"), nodeWith("core-bind", K.Prompt{}, [portIn("CapToken[]"), portOut("CapToken[]")])]),
+    auditGood(), seedTwins(), ["align"]
+  )
+
+def faultArchive() -> K.Kernel:
+  lawsKernelFull(
+    fullLayers(), w2lGood(),
+    graphOf("pg-dem", [nodeWith("author", K.Prompt{}, [portOut("TwinSpec")]), xform("validate"), nodeWith("register", K.Prompt{}, [portOut("LineageArchive")]), prompt("archive")]),
+    adlGood(), coreGood(), twinGood(), auditGood(), seedTwins(), ["align"]
+  )
+
+def faultEval() -> K.Kernel:
+  lawsKernelFull(
+    fullLayers(), w2lGood(),
+    graphOf("pg-dem", [nodeWith("author", K.Prompt{}, [portOut("TwinSpec")]), prompt("validate"), nodeWith("register", K.Prompt{}, [portOut("LineageArchive")]), xform("archive")]),
+    adlGood(), coreGood(), twinGood(), auditGood(), seedTwins(), ["align"]
+  )
+
+def faultCut() -> K.Kernel:
+  lawsKernelFull(
+    fullLayers(), w2lGood(), demGood(),
+    graphE("pg-adl", [nodeWith("partition-propose", K.Prompt{}, [portOut("TwinSpec")]), xform("lineage-record"), xform("reindex"), xform("holdout"), xform("cut-class"), prompt("cluster")], [edgeOf("a1", "partition-propose", "lineage-record")]),
+    coreGood(), twinGood(), auditGood(), seedTwins(), ["align"]
+  )
+
+def faultRoute() -> K.Kernel:
+  lawsKernelFull(
+    fullLayers(), w2lGood(), demGood(),
+    graphE("pg-adl", [nodeWith("partition-propose", K.Prompt{}, [portOut("TwinSpec")]), xform("lineage-record"), xform("reindex"), xform("holdout"), xform("cut-class"), xform("cluster")], [K.Edge{"a1", "partition-propose", "lineage-record", "", "in", K.DataEdge{}, False{}, ""}]),
+    coreGood(), twinGood(), auditGood(), seedTwins(), ["align"]
+  )
+
+def faultAudit() -> K.Kernel:
+  lawsKernelFull(
+    fullLayers(), w2lGood(), demGood(), adlGood(), coreGood(), twinGood(),
+    graphOf("pg-audit", [xform("audit-heuristics"), xform("sample-clean"), nodeWith("report", K.Prompt{}, [portOut("Permit")])]),
+    seedTwins(), ["align"]
+  )

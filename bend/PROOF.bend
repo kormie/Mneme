@@ -270,3 +270,201 @@ def Laws.action_gate_missing_bind_red():
 
 def Laws.action_gate_wrong_graph_red():
   {==}
+
+def Laws.partition_propose_green():
+  {==}
+
+def Laws.partition_propose_emits_ack_red():
+  {==}
+
+def Laws.partition_propose_install_port_red():
+  {==}
+
+def Laws.partition_propose_to_reindex_red():
+  {==}
+
+def Laws.partition_propose_no_lineage_node_red():
+  {==}
+
+def Laws.partition_propose_no_lineage_edge_red():
+  {==}
+
+def Laws.partition_propose_no_twinspec_red():
+  {==}
+
+def Laws.reindex_no_spec_green():
+  {==}
+
+def Laws.reindex_reads_spec_red():
+  {==}
+
+def Laws.reindex_absent_red():
+  {==}
+
+def Laws.bind_consumes_tokens_green():
+  {==}
+
+def Laws.bind_no_token_input_red():
+  {==}
+
+def Laws.bind_emits_token_array_red():
+  {==}
+
+def Laws.bind_emits_single_token_red():
+  {==}
+
+def Laws.bind_emits_other_green():
+  {==}
+
+def Laws.bind_absent_red():
+  {==}
+
+def Laws.archive_keeps_losers_green():
+  {==}
+
+def Laws.archive_prompt_red():
+  {==}
+
+def Laws.register_no_archive_red():
+  {==}
+
+def Laws.register_reads_archive_red():
+  {==}
+
+def Laws.archive_absent_red():
+  {==}
+
+def Laws.eval_hidden_green():
+  {==}
+
+def Laws.eval_validate_prompt_red():
+  {==}
+
+def Laws.eval_holdout_prompt_red():
+  {==}
+
+def Laws.eval_holdout_absent_red():
+  {==}
+
+def Laws.eval_holdout_wrong_graph_red():
+  {==}
+
+def Laws.cut_classify_green():
+  {==}
+
+def Laws.cut_class_prompt_red():
+  {==}
+
+def Laws.cluster_prompt_red():
+  {==}
+
+def Laws.cluster_absent_red():
+  {==}
+
+def Laws.data_edge_routable_green():
+  {==}
+
+def Laws.control_edge_guarded_green():
+  {==}
+
+def Laws.control_edge_unguarded_red():
+  {==}
+
+def Laws.edge_no_from_port_red():
+  {==}
+
+def Laws.edge_no_to_port_red():
+  {==}
+
+def Laws.no_edges_routable_green():
+  {==}
+
+def Laws.one_bad_edge_red():
+  {==}
+
+def Laws.audit_not_gate_green():
+  {==}
+
+def Laws.audit_emits_permit_red():
+  {==}
+
+def Laws.audit_emits_effect_red():
+  {==}
+
+def Laws.audit_emits_twin_id_red():
+  {==}
+
+def Laws.audit_emits_core_store_red():
+  {==}
+
+def Laws.audit_emits_ltm_red():
+  {==}
+
+def Laws.audit_emits_archive_red():
+  {==}
+
+def Laws.audit_reads_permit_green():
+  {==}
+
+def Laws.audit_heuristics_prompt_red():
+  {==}
+
+def Laws.audit_sample_clean_prompt_red():
+  {==}
+
+def Laws.audit_sample_clean_absent_red():
+  {==}
+
+def Laws.laws_kernel_green():
+  {==}
+
+def Laws.laws_fail_well_formed():
+  {==}
+
+def Laws.laws_fail_frozen():
+  {==}
+
+def Laws.laws_fail_structural():
+  {==}
+
+def Laws.laws_fail_hybrid():
+  {==}
+
+def Laws.laws_fail_author():
+  {==}
+
+def Laws.laws_fail_self_and_auth():
+  {==}
+
+def Laws.laws_fail_cap_token():
+  {==}
+
+def Laws.laws_fail_twin_origin():
+  {==}
+
+def Laws.laws_fail_action_gate():
+  {==}
+
+def Laws.laws_fail_partition():
+  {==}
+
+def Laws.laws_fail_reindex():
+  {==}
+
+def Laws.laws_fail_bind():
+  {==}
+
+def Laws.laws_fail_archive():
+  {==}
+
+def Laws.laws_fail_eval():
+  {==}
+
+def Laws.laws_fail_cut():
+  {==}
+
+def Laws.laws_fail_route():
+  {==}
+
+def Laws.laws_fail_audit():
+  {==}
