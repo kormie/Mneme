@@ -1,6 +1,7 @@
 import Base
 import ./Kernel.bend as K
 import ./Trace.bend as T
+import ./WellFormed.bend as W
 import ./Negatives.bend as N
 import ./Fixtures.bend as F
 
@@ -165,3 +166,68 @@ law ghost_in_trace_red:
 law empty_trace_valid:
   for k: K.Kernel
   {T.validTrace(k, []) == True{} : Bool}
+
+# --- INV-G1-ENUMERABLE (WellFormed.WellFormed) ---
+
+law well_formed_green:
+  {W.wellFormed(F.wellKernel()) == True{} : Bool}
+
+law no_graphs_red:
+  {W.wellFormed(F.noGraphsKernel()) == False{} : Bool}
+
+law duplicate_graph_red:
+  {W.wellFormed(F.duplicateGraphKernel()) == False{} : Bool}
+
+law missing_core_layer_red:
+  {W.wellFormed(F.kernelOf(F.noCoreLayers(), [F.tinyGraph()])) == False{} : Bool}
+
+law missing_lineage_store_red:
+  {W.wellFormed(F.kernelOf(F.noLineageLayers(), [F.tinyGraph()])) == False{} : Bool}
+
+law ill_formed_graph_makes_kernel_red:
+  {W.wellFormed(F.kernelOf(F.fullLayers(), [F.badVersionGraph()])) == False{} : Bool}
+
+# --- INV-LAYERS-FOUR (WellFormed.layersFour) ---
+
+law layers_four_green:
+  {W.layersFour(F.fullLayers()) == True{} : Bool}
+
+law layers_four_missing_red:
+  {W.layersFour(F.noCoreLayers()) == False{} : Bool}
+
+law layers_four_empty_red:
+  {W.layersFour([]) == False{} : Bool}
+
+# --- INV-G4-VERSIONED (WellFormed.graphWF) ---
+
+law graph_wf_green:
+  {W.graphWF(F.tinyGraph()) == True{} : Bool}
+
+law duplicate_node_red:
+  {W.graphWF(F.duplicateNodeGraph()) == False{} : Bool}
+
+law empty_node_id_red:
+  {W.graphWF(F.emptyNodeIdGraph()) == False{} : Bool}
+
+law dangling_edge_red:
+  {W.graphWF(F.danglingEdgeGraph()) == False{} : Bool}
+
+law bad_version_red:
+  {W.graphWF(F.badVersionGraph()) == False{} : Bool}
+
+law short_version_red:
+  {W.graphWF(F.shortVersionGraph()) == False{} : Bool}
+
+law versioned_prefix_green:
+  {W.versioned("mneme.graph/7") == True{} : Bool}
+
+# --- WellFormed.nodup ---
+
+law nodup_empty_green:
+  {W.nodup([]) == True{} : Bool}
+
+law nodup_distinct_green:
+  {W.nodup(["a", "b", "c"]) == True{} : Bool}
+
+law nodup_repeat_red:
+  {W.nodup(["a", "b", "a"]) == False{} : Bool}
