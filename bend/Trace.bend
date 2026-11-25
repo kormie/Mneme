@@ -1,4 +1,5 @@
 import Base
+import ./Kernel.bend as K
 
 # Port of spec/lean/Trace.lean (the temporal fragment). Mirrors the Lean source;
 # it never extends it. Every def names its Lean counterpart.
@@ -188,3 +189,29 @@ def auditNotEffect.go(+evs: List<&2, TraceEvent>, +hot: Bool) -> Bool:
 
 def auditNotEffect(+evs: List<&2, TraceEvent>) -> Bool:
   auditNotEffect.go(evs, False{})
+
+def mentionsExistEdge(+k: K.Kernel, +e: String) -> Bool:
+  match k:
+    case K.Kernel{_, _, graphs, _, _}:
+      K.edgeExists(graphs, e)
+
+# Lean: `mentionsExist`. Nodes named in the log exist; edges named in
+# edgeFire exist. Ghost wires fail.
+def mentionsExist(+k: K.Kernel, +ev: TraceEvent) -> Bool:
+  match ev:
+    case NodeEnter{g, n}:
+      K.isSome(&2, K.Node, K.findNode(k, g, n))
+    case NodeExit{g, n}:
+      K.isSome(&2, K.Node, K.findNode(k, g, n))
+    case EdgeFire{e}:
+      mentionsExistEdge(k, e)
+    case _:
+      True{}
+
+# Lean: `validTraceB` (`τ.all (mentionsExist k)`).
+def validTrace(+k: K.Kernel, +evs: List<&2, TraceEvent>) -> Bool:
+  match evs:
+    case Nil{}:
+      True{}
+    case Con{h, t}:
+      (mentionsExist(k, h) && validTrace(k, t))
