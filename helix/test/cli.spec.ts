@@ -180,13 +180,33 @@ describe("--status is a pure inspection", () => {
       "--spool", w.spool, "--buffer", w.buffer, "--inbox", w.inbox, "--store", w.store,
       "--core", join(w.dir, "no-core.json"),
     ]);
-    const parsed = JSON.parse(stdout) as { core: { values: string[] }; paths: { spoolDir: string }; status: { spool: { waiting: number; bad: number }; buffer: { packets: number }; store: { episodes: number } } };
+    const parsed = JSON.parse(stdout) as { mode: string; core: { values: string[] }; paths: { spoolDir: string }; status: { spool: { waiting: number; bad: number }; buffer: { packets: number }; store: { episodes: number } } };
+    expect(parsed.mode).toBe("status");
     expect(parsed.core.values).toEqual([]);
     expect(parsed.paths.spoolDir).toBe(w.spool);
     expect(parsed.status).toMatchObject({ spool: { waiting: 1, bad: 1 }, buffer: { packets: 3 }, store: { episodes: 1 } });
     expect(stdout).not.toContain(w.sentinel);
-    await expect(run("bun", [TRAY, "--ask", "x", "--json", "--core", join(w.dir, "no-core.json"), "--store", w.store]))
-      .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("--json is only valid with --status") });
+    await expect(run("bun", [TRAY, "--json", "--core", join(w.dir, "no-core.json"), "--store", w.store]))
+      .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("--json is only valid with --status, --ask, or --journal") });
+  });
+
+  it("--ask --json preserves hit order and emits data without prose", async () => {
+    const dir = tmp("ask-json");
+    const store = join(dir, "store.json");
+    drainPackets([packet("cc-old", "user-prompt", 1756000000000, "deploy alpha"),
+      packet("cc-new", "user-prompt", 1756000001000, "deploy beta")], store, emptyCore(), kernel);
+    const out = join(dir, "ask.json");
+    const { stdout, stderr } = await run("bun", [TRAY, "--ask", "deploy", "--json", "--limit", "1",
+      "--store", store, "--core", join(dir, "no-core.json"), "--out", out]);
+    expect(stderr).toBe("");
+    const parsed = JSON.parse(stdout) as { mode: string; limit: number; hits: { note: string }[]; omitted: number; trace: { file: string; readOnly: boolean } };
+    expect(parsed).toMatchObject({ mode: "ask", limit: 1, hits: [{ note: "cc-new" }], omitted: 1,
+      trace: { file: out, readOnly: true } });
+    expect(stdout).not.toContain("ask:");
+    const proseOut = join(dir, "prose.json");
+    await run("bun", [TRAY, "--ask", "deploy", "--limit", "1", "--store", store,
+      "--core", join(dir, "no-core.json"), "--out", proseOut]);
+    expect(readFileSync(out, "utf8")).toBe(readFileSync(proseOut, "utf8"));
   });
 
   it("exits 0 on an empty world and points at --ask", async () => {
@@ -213,6 +233,12 @@ describe("--status is a pure inspection", () => {
       .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("choose one mode") });
     await expect(run("bun", [TRAY, "--status", "--as-of", "2026-09-05", "--core", core]))
       .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("not valid with --status") });
+    const store = join(dir, "store.json");
+    await expect(run("bun", [TRAY, "--dogfood", "--json", "--spool", join(dir, "spool"),
+      "--buffer", join(dir, "buffer.jsonl"), "--inbox", join(dir, "inbox"), "--store", store,
+      "--core", core, "--out", join(dir, "dogfood.json")]))
+      .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("--json is only valid with --status, --ask, or --journal") });
+    expect(existsSync(store)).toBe(false);
   });
 
   it("trayStatus computes the same counts as a plain object", () => {
