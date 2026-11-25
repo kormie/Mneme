@@ -30,6 +30,12 @@ list. Run each command and paste its literal output underneath.
   <paste output>
   ```
 
+- [ ] `cd bend && bend PROOF.bend && bend PROOF.bend --verdict`
+
+  ```text
+  <paste output>
+  ```
+
 - [ ] `git diff --stat origin/main...HEAD -- spec spec.sha256` — must be
   **empty** unless this PR is a steward-initiated pack import
 
@@ -53,6 +59,7 @@ just routine review.**
   archive, audit-heuristics, sample-clean)
 - [ ] Treats a `Certificate` or `RuntimeCertificate` as done
 - [ ] Changes the Lean law set
+- [ ] Makes Bend, rather than Lean, the certifier
 - [ ] Force-pushes anything
 
 ## Negatives
